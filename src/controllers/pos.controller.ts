@@ -111,7 +111,17 @@ export const validateVoucher = async (req: Request, res: Response) => {
 
 export const processPosOrder = async (req: Request, res: Response) => {
   try {
-    const { branchId, sessionId, customerId, items, paymentMethod, appliedVouchers } = req.body;
+    const { 
+      branchId, 
+      sessionId, 
+      customerId: providedCustomerId, 
+      customerName, 
+      customerPhone, 
+      shippingAddress, 
+      items, 
+      paymentMethod, 
+      appliedVouchers 
+    } = req.body;
     
     const orderNumber = `POS-${Date.now()}`;
     
@@ -170,6 +180,26 @@ export const processPosOrder = async (req: Request, res: Response) => {
       }
     }
 
+    // 1.9 Customer Resolution
+    let finalCustomerId = providedCustomerId;
+    if (!finalCustomerId && customerPhone) {
+      let customer = await prisma.customer.findUnique({
+        where: { phone: customerPhone },
+      });
+
+      if (!customer) {
+        customer = await prisma.customer.create({
+          data: {
+            phone: customerPhone,
+            firstName: customerName ? customerName.split(" ")[0] : "Guest",
+            lastName: customerName ? customerName.split(" ").slice(1).join(" ") : "",
+            isGuest: true,
+          },
+        });
+      }
+      finalCustomerId = customer.id;
+    }
+
     // 2. Create Order
     const order = await prisma.order.create({
       data: {
@@ -184,7 +214,8 @@ export const processPosOrder = async (req: Request, res: Response) => {
         total: calculatedTotal,
         branchId,
         posSessionId: sessionId,
-        customerId: customerId || undefined,
+        customerId: finalCustomerId || undefined,
+        shippingAddress: shippingAddress || undefined,
         items: {
           create: orderItems
         }
