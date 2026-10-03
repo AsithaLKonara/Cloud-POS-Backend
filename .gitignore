@@ -9,5 +9,3 @@ databaseOLD/
 config.bat
 src/scripts/test-crud.ts
 
-.env
-.env.production
