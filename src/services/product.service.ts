@@ -28,14 +28,18 @@ export class ProductService {
     take?: number;
     search?: string;
     category?: string;
+    productType?: string;
+    brand?: string;
+    viscosity?: string;
+    oilType?: string;
     color?: string;
     size?: string;
     minPrice?: number;
     maxPrice?: number;
     status?: string;
   }) {
-    const { skip = 0, take = 50, search, category, color, size, minPrice, maxPrice, status } = params;
-    const cacheKey = `products:all:skip:${skip}:take:${take}:search:${search || 'none'}:category:${category || 'none'}:color:${color || 'none'}:size:${size || 'none'}:minP:${minPrice || 'none'}:maxP:${maxPrice || 'none'}:status:${status || 'none'}`;
+    const { skip = 0, take = 50, search, category, productType, brand, viscosity, oilType, color, size, minPrice, maxPrice, status } = params;
+    const cacheKey = `products:all:skip:${skip}:take:${take}:search:${search || 'none'}:category:${category || 'none'}:type:${productType || 'none'}:brand:${brand || 'none'}:visc:${viscosity || 'none'}:oilType:${oilType || 'none'}:color:${color || 'none'}:size:${size || 'none'}:minP:${minPrice || 'none'}:maxP:${maxPrice || 'none'}:status:${status || 'none'}`;
 
     return withCache(cacheKey, 900, async () => {
       const where: Prisma.ProductWhereInput = {
@@ -44,11 +48,19 @@ export class ProductService {
               OR: [
                 { name: { contains: search, mode: 'insensitive' } },
                 { description: { contains: search, mode: 'insensitive' } },
+                { brand: { contains: search, mode: 'insensitive' } },
+                { partNumber: { contains: search, mode: 'insensitive' } },
+                { viscosity: { contains: search, mode: 'insensitive' } },
+                { compatibleVehicles: { contains: search, mode: 'insensitive' } },
                 { variants: { some: { sku: { contains: search, mode: 'insensitive' } } } },
                 { variants: { some: { barcode: { contains: search, mode: 'insensitive' } } } },
               ],
             }
           : {}),
+        ...(productType ? { productType: { equals: productType, mode: 'insensitive' } } : {}),
+        ...(brand ? { brand: { equals: brand, mode: 'insensitive' } } : {}),
+        ...(viscosity ? { viscosity: { equals: viscosity, mode: 'insensitive' } } : {}),
+        ...(oilType ? { oilType: { equals: oilType, mode: 'insensitive' } } : {}),
         ...(category
           ? {
               category: { slug: category }

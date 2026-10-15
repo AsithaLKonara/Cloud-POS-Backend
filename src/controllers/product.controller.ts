@@ -10,6 +10,10 @@ const productVariantSchema = z.object({
   barcode: z.string().optional().nullable(),
   price: z.number(),
   salePrice: z.number().optional().nullable(),
+  costPrice: z.number().optional().default(0),
+  wholesalePrice: z.number().optional().nullable(),
+  packUnit: z.string().optional().nullable(),
+  unitVolumeLiters: z.number().optional().nullable(),
   quantity: z.number(),
   stockStatus: z.string().optional(),
   featuredImage: z.string().optional().nullable(),
@@ -23,6 +27,13 @@ const productSchema = z.object({
   barcode: z.string().optional().nullable(),
   description: z.string().optional(),
   categoryId: z.string().optional(),
+  productType: z.string().optional().default('LUBRICANT'),
+  brand: z.string().optional().nullable(),
+  viscosity: z.string().optional().nullable(),
+  oilType: z.string().optional().nullable(),
+  apiStandard: z.string().optional().nullable(),
+  partNumber: z.string().optional().nullable(),
+  compatibleVehicles: z.string().optional().nullable(),
   collectionId: z.string().optional(),
   sizeGuideEnabled: z.boolean().optional(),
   sizeGuideContent: z.string().optional().nullable(),
@@ -43,13 +54,31 @@ export class ProductController {
       const take = req.query.take ? parseInt(req.query.take as string, 10) : undefined;
       const search = req.query.search as string | undefined;
       const category = req.query.category as string | undefined;
+      const productType = req.query.productType as string | undefined;
+      const brand = req.query.brand as string | undefined;
+      const viscosity = req.query.viscosity as string | undefined;
+      const oilType = req.query.oilType as string | undefined;
       const color = req.query.color as string | undefined;
       const size = req.query.size as string | undefined;
       const minPrice = req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined;
       const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined;
       const status = req.query.status as string | undefined;
 
-      const result = await productService.getAllProducts({ skip, take, search, category, color, size, minPrice, maxPrice, status });
+      const result = await productService.getAllProducts({
+        skip,
+        take,
+        search,
+        category,
+        productType,
+        brand,
+        viscosity,
+        oilType,
+        color,
+        size,
+        minPrice,
+        maxPrice,
+        status
+      });
       res.status(200).json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Internal Server Error' });

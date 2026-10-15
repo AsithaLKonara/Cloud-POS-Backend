@@ -56,6 +56,13 @@ model Product {
   sizeGuideEnabled  Boolean             @default(false)
   sizeGuideImageUrl String?
   status            String              @default("ACTIVE")
+  productType       String              @default("LUBRICANT") // LUBRICANT, FILTER, BATTERY, CAR_CARE, SPARE_PART, ACCESSORY, SERVICE, GENERAL
+  brand             String?
+  viscosity         String?             // e.g. 0W-20, 5W-30, 10W-40, 15W-40, 20W-50, SAE 90, ATF, DOT 4 (null for non-oil)
+  oilType           String?             // e.g. Full Synthetic, Semi-Synthetic, Mineral, Heavy Duty Diesel (null for non-oil)
+  apiStandard       String?             // e.g. API SP, ILSAC GF-6, ACEA C3, JASO MA2
+  partNumber        String?             // e.g. OEM / Part # for filters, batteries, plugs
+  compatibleVehicles String?            // e.g. Applicable vehicle models/engines
   collections       CollectionProduct[]
   category          Category?           @relation(fields: [categoryId], references: [id])
   variants          ProductVariant[]
@@ -64,32 +71,38 @@ model Product {
 
   @@index([categoryId])
   @@index([createdAt])
+  @@index([productType])
+  @@index([brand])
 }
 
 model ProductVariant {
-  id             String                 @id @default(uuid())
-  productId      String
-  name           String?
-  sku            String?                @unique
-  barcode        String?                @unique
-  price          Float
-  salePrice      Float?
-  stockStatus    String                 @default("instock")
-  quantity       Int                    @default(0)
-  color          String?
-  size           String?
-  featuredImage  String?
-  gallery        String[]
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  cartItems      CartItem[]
-  flashSaleItems FlashSaleItem[]
-  inventoryItems InventoryItem[]
-  transactions   InventoryTransaction[]
-  orderItems     OrderItem[]
-  product        Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
-  stockTransfers StockTransfer[]
-  returnItems    ReturnItem[]
+  id                 String                 @id @default(uuid())
+  productId          String
+  name               String?
+  sku                String?                @unique
+  barcode            String?                @unique
+  price              Float
+  salePrice          Float?
+  costPrice          Float                  @default(0)
+  wholesalePrice     Float?
+  packUnit           String?                // e.g. 1L, 4L, 5L, 20L, 208L Drum, Piece, Can, Bottle, Box, Liter Dispensed
+  unitVolumeLiters   Float?                 // Volume in liters for bulk/dispensing calculations
+  stockStatus        String                 @default("instock")
+  quantity           Int                    @default(0)
+  color              String?
+  size               String?
+  featuredImage      String?
+  gallery            String[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  cartItems          CartItem[]
+  flashSaleItems     FlashSaleItem[]
+  inventoryItems     InventoryItem[]
+  transactions       InventoryTransaction[]
+  orderItems         OrderItem[]
+  product            Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockTransfers     StockTransfer[]
+  returnItems        ReturnItem[]
 
   @@index([productId])
 }
@@ -114,6 +127,7 @@ model Branch {
   transfersOut StockTransfer[]        @relation("FromBranch")
   transfersIn  StockTransfer[]        @relation("ToBranch")
   staff        User[]                 @relation("BranchStaff")
+  expenses     BranchExpense[]
 }
 
 model PosTerminal {
@@ -184,9 +198,10 @@ model InventoryTransaction {
   variantId      String
   type           String
   quantityChange Int
-  reason         String?
-  reference      String?
-  createdAt      DateTime       @default(now())
+  reason                  String?
+  reference               String?
+  costPriceAtTransaction  Float?
+  createdAt               DateTime       @default(now())
   branchId       String
   branch         Branch         @relation(fields: [branchId], references: [id])
   variant        ProductVariant @relation(fields: [variantId], references: [id])
@@ -233,6 +248,7 @@ model User {
   refreshTokens     RefreshToken[]
   branch            Branch?            @relation("BranchStaff", fields: [branchId], references: [id])
   userRoles         UserRole[]
+  loggedExpenses    BranchExpense[]
 }
 
 model Role {
@@ -423,9 +439,10 @@ model OrderItem {
   id              String         @id @default(uuid())
   orderId         String
   variantId       String
-  quantity        Int
-  priceAtPurchase Float
-  createdAt       DateTime       @default(now())
+  quantity            Int
+  priceAtPurchase     Float
+  costPriceAtPurchase Float          @default(0)
+  createdAt           DateTime       @default(now())
   order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant         ProductVariant @relation(fields: [variantId], references: [id])
   returnItems     ReturnItem[]
@@ -719,4 +736,22 @@ enum ReviewStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+model BranchExpense {
+  id          String    @id @default(uuid())
+  branchId    String
+  category    String    // RENT, ELECTRICITY, WATER, SALARY, MAINTENANCE, EQUIPMENT, SUPPLIES, MARKETING, OTHER
+  title       String
+  amount      Float
+  date        DateTime  @default(now())
+  notes       String?
+  receiptUrl  String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  branch      Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+
+  @@index([branchId, date])
 }

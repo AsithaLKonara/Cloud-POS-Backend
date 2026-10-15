@@ -43,6 +43,8 @@ import notificationRoutes from "./routes/notification.routes";
 import loyaltyRoutes from "./routes/loyalty.routes";
 import auditRoutes from "./routes/audit.routes";
 import feedRoutes from "./routes/feed.routes";
+import expenseRoutes from "./routes/expense.routes";
+import pnlRoutes from "./routes/pnl.routes";
 import { RoleService } from "./services/role.service";
 import { SettingService } from "./services/setting.service";
 dotenv.config();
@@ -153,6 +155,8 @@ app.use(`${API_PREFIX}/otp`, otpRoutes);
 app.use(`${API_PREFIX}/notifications`, notificationRoutes);
 app.use(`${API_PREFIX}/audit`, auditRoutes);
 app.use(`${API_PREFIX}/feed`, feedRoutes);
+app.use(`${API_PREFIX}/expenses`, expenseRoutes);
+app.use(`${API_PREFIX}/pnl`, pnlRoutes);
 
 // Health Check
 app.get("/health", (req: Request, res: Response) => {

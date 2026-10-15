@@ -199,7 +199,8 @@ export const posService = {
         orderItems.push({
           variantId: vId,
           quantity: item.qty,
-          priceAtPurchase: price
+          priceAtPurchase: price,
+          costPriceAtPurchase: variant.costPrice ?? 0
         });
       }
 

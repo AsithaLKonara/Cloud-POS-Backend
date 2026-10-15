@@ -177,17 +177,18 @@ export const inventoryService = {
   async adjustStock(data: {
     variantId: string;
     branchId: string;
-    type: 'RECEIVE' | 'DEDUCT';
+    type: 'RECEIVE' | 'DEDUCT' | 'SPILLAGE_WASTAGE' | 'DAMAGE' | 'INTERNAL_USE' | 'TRANSFER_OUT' | 'TRANSFER_IN';
     quantity: number;
     reason?: string;
     reference?: string;
   }, tx: any = prisma) {
     const { variantId, branchId, type, quantity, reason, reference } = data;
-    const delta = type === 'RECEIVE' ? Math.abs(quantity) : -Math.abs(quantity);
+    const isDeduction = ['DEDUCT', 'SPILLAGE_WASTAGE', 'DAMAGE', 'INTERNAL_USE', 'TRANSFER_OUT'].includes(type);
+    const delta = isDeduction ? -Math.abs(quantity) : Math.abs(quantity);
 
-    // Ensure stock doesn't go below 0 for DEDUCT
+    // Ensure stock doesn't go below 0 for deductions
     let inv;
-    if (type === 'DEDUCT') {
+    if (isDeduction) {
       const result = await tx.inventoryItem.updateMany({
         where: { 
           variantId, 
@@ -224,6 +225,11 @@ export const inventoryService = {
       data: { quantity: totalQuantity }
     });
 
+    const variantRecord = await tx.productVariant.findUnique({
+      where: { id: variantId },
+      select: { costPrice: true }
+    });
+
     const transaction = await tx.inventoryTransaction.create({
       data: {
         variantId,
@@ -232,6 +238,7 @@ export const inventoryService = {
         quantityChange: delta,
         reason,
         reference,
+        costPriceAtTransaction: variantRecord?.costPrice ?? 0,
       },
     });
 
