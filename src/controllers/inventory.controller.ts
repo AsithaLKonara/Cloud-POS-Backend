@@ -104,7 +104,8 @@ export const getTransfers = async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
-    const result = await inventoryService.getTransfers(page, limit);
+    const branchId = req.query.branchId as string | undefined;
+    const result = await inventoryService.getTransfers(branchId, page, limit);
     res.json(result);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

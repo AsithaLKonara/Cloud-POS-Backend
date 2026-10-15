@@ -144,7 +144,8 @@ export const inventoryService = {
         CAST(COALESCE(SUM(ii."quantity"), 0) AS INTEGER) as "totalQty",
         CAST(COALESCE(SUM(CASE WHEN ii."quantity" = 0 THEN 1 ELSE 0 END), 0) AS INTEGER) as "outOfStockCount",
         CAST(COALESCE(SUM(CASE WHEN ii."quantity" > 0 AND ii."quantity" <= ii."lowStockThreshold" THEN 1 ELSE 0 END), 0) AS INTEGER) as "lowStockCount",
-        CAST(COALESCE(SUM(ii."quantity" * pv."price"), 0) AS FLOAT) as "estimatedValue"
+        CAST(COALESCE(SUM(ii."quantity" * pv."price"), 0) AS FLOAT) as "estimatedValue",
+        CAST(COALESCE(SUM(ii."quantity" * COALESCE(pv."costPrice", 0)), 0) AS FLOAT) as "estimatedCostValue"
       FROM "InventoryItem" ii
       JOIN "ProductVariant" pv ON ii."variantId" = pv."id"
     `;
@@ -161,7 +162,8 @@ export const inventoryService = {
       totalQty: 0,
       outOfStockCount: 0,
       lowStockCount: 0,
-      estimatedValue: 0
+      estimatedValue: 0,
+      estimatedCostValue: 0,
     };
 
     return {
@@ -169,6 +171,7 @@ export const inventoryService = {
       lowStockCount: stats.lowStockCount,
       outOfStockCount: stats.outOfStockCount,
       estimatedValue: stats.estimatedValue,
+      estimatedCostValue: stats.estimatedCostValue,
       totalSKUs: totalVariants, // Total catalog SKUs, regardless of stock
     };
   },
@@ -332,20 +335,28 @@ export const inventoryService = {
   },
 
   // ─── Transfers ────────────────────────────────────────────────────────────────
-  async getTransfers(page = 1, limit = 20) {
+  async getTransfers(branchId?: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
+    const where: any = {};
+    if (branchId) {
+      where.OR = [
+        { fromBranchId: branchId },
+        { toBranchId: branchId },
+      ];
+    }
     const [data, total] = await Promise.all([
       prisma.stockTransfer.findMany({
+        where,
         include: {
           fromBranch: true,
           toBranch: true,
-          variant: { select: { sku: true, name: true, product: { select: { name: true } } } },
+          variant: { select: { sku: true, name: true, product: { select: { name: true, brand: true, viscosity: true } } } },
         },
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.stockTransfer.count(),
+      prisma.stockTransfer.count({ where }),
     ]);
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   },
