@@ -64,8 +64,34 @@ export const posService = {
     return { expectedClosing };
   },
 
-  async closeSession(data: { sessionId: string; actualClosing: number }) {
-    const { expectedClosing } = await this.getExpectedClosing(data.sessionId);
+  async closeSession(data: { sessionId: string; actualClosing: number; closingNotes?: string }) {
+    const session = await prisma.posSession.findUnique({
+      where: { id: data.sessionId }
+    });
+    if (!session || session.status === 'CLOSED') {
+      throw new Error('Session not found or already closed.');
+    }
+
+    const [cashAgg, cardAgg, creditAgg] = await Promise.all([
+      prisma.order.aggregate({
+        where: { posSessionId: data.sessionId, paymentMethod: 'CASH' },
+        _sum: { total: true }
+      }),
+      prisma.order.aggregate({
+        where: { posSessionId: data.sessionId, paymentMethod: { in: ['CARD', 'VISA', 'MASTERCARD'] } },
+        _sum: { total: true }
+      }),
+      prisma.order.aggregate({
+        where: { posSessionId: data.sessionId, paymentMethod: { in: ['CREDIT_ACCOUNT', 'GARAGE_CREDIT'] } },
+        _sum: { total: true }
+      })
+    ]);
+
+    const totalCashSales = cashAgg._sum.total || 0;
+    const totalCardSales = cardAgg._sum.total || 0;
+    const totalCreditSales = creditAgg._sum.total || 0;
+
+    const expectedClosing = session.openingFloat + totalCashSales;
     const variance = data.actualClosing - expectedClosing;
     
     return await prisma.posSession.update({
@@ -75,7 +101,16 @@ export const posService = {
         closedAt: new Date(),
         expectedClosing,
         actualClosing: data.actualClosing,
-        variance
+        variance,
+        totalCashSales,
+        totalCardSales,
+        totalCreditSales,
+        closingNotes: data.closingNotes || null
+      },
+      include: {
+        branch: true,
+        terminal: true,
+        user: true
       }
     });
   },

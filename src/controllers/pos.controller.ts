@@ -153,8 +153,10 @@ export const processPosOrder = async (req: Request, res: Response) => {
 
       orderItems.push({
         variantId: item.variantId,
-        quantity: item.qty,
-        priceAtPurchase: price
+        quantity: Math.max(1, Math.round(item.qty)),
+        dispensedVolumeLiters: item.dispensedVolumeLiters || (item.qty % 1 !== 0 ? item.qty : null),
+        priceAtPurchase: price,
+        costPriceAtPurchase: variant.costPrice ?? 0
       });
     }
 
@@ -200,14 +202,30 @@ export const processPosOrder = async (req: Request, res: Response) => {
       finalCustomerId = customer.id;
     }
 
+    const isCredit = paymentMethod === 'CREDIT_ACCOUNT' || paymentMethod === 'GARAGE_CREDIT';
+    if (isCredit) {
+      if (!finalCustomerId) {
+        return res.status(400).json({ error: 'Customer / Garage account is required for Credit / Pay Later sales.' });
+      }
+      const customer = await prisma.customer.findUnique({ where: { id: finalCustomerId } });
+      if (!customer) {
+        return res.status(404).json({ error: 'Customer account not found.' });
+      }
+      if (customer.creditLimit > 0 && ((customer.creditBalance || 0) + calculatedTotal > customer.creditLimit)) {
+        return res.status(400).json({ 
+          error: `Credit limit exceeded! Customer Credit Limit: Rs. ${customer.creditLimit.toLocaleString()}, Current Balance: Rs. ${(customer.creditBalance || 0).toLocaleString()}, Attempted Charge: Rs. ${calculatedTotal.toLocaleString()}` 
+        });
+      }
+    }
+
     // 2. Create Order
     const order = await prisma.order.create({
       data: {
         orderNumber,
         type: 'POS',
         status: 'DELIVERED', // POS orders are delivered instantly
-        paymentStatus: 'PAID',
-        paymentMethod,
+        paymentStatus: isCredit ? 'UNPAID' : 'PAID',
+        paymentMethod: isCredit ? 'CREDIT_ACCOUNT' : paymentMethod,
         subtotal: calculatedSubtotal,
         tax: calculatedTax,
         shippingFee: 0,
@@ -235,6 +253,47 @@ export const processPosOrder = async (req: Request, res: Response) => {
         data: { status: 'USED', usedAt: new Date(), orderId: order.id }
       });
     }
+
+    // 3.5 Record Customer Credit Ledger if Credit Account
+    if (isCredit && finalCustomerId) {
+      const updatedCustomer = await prisma.customer.update({
+        where: { id: finalCustomerId },
+        data: { creditBalance: { increment: calculatedTotal } }
+      });
+
+      await prisma.customerCreditLedger.create({
+        data: {
+          customerId: finalCustomerId,
+          orderId: order.id,
+          type: 'CHARGE',
+          amount: calculatedTotal,
+          balanceAfter: updatedCustomer.creditBalance,
+          paymentMethod: 'CREDIT_ACCOUNT',
+          reference: order.orderNumber,
+          notes: `POS Credit Sale Invoice #${order.orderNumber}`
+        }
+      });
+    }
+
+    // 3.8 Update POS Session Metrics
+    if (sessionId) {
+      if (paymentMethod === 'CASH') {
+        await prisma.posSession.update({
+          where: { id: sessionId },
+          data: { totalCashSales: { increment: calculatedTotal } }
+        }).catch(() => {});
+      } else if (paymentMethod === 'CARD' || paymentMethod === 'VISA' || paymentMethod === 'MASTERCARD') {
+        await prisma.posSession.update({
+          where: { id: sessionId },
+          data: { totalCardSales: { increment: calculatedTotal } }
+        }).catch(() => {});
+      } else if (isCredit) {
+        await prisma.posSession.update({
+          where: { id: sessionId },
+          data: { totalCreditSales: { increment: calculatedTotal } }
+        }).catch(() => {});
+      }
+    }
     
     // 4. Deduct Inventory
     const { inventoryService } = require('../services/inventory.service');
@@ -243,7 +302,7 @@ export const processPosOrder = async (req: Request, res: Response) => {
         variantId: item.variantId,
         branchId,
         type: 'DEDUCT',
-        quantity: item.qty,
+        quantity: Math.max(1, Math.ceil(item.qty)),
         reason: 'POS Sale',
         reference: order.id
       });
@@ -255,3 +314,90 @@ export const processPosOrder = async (req: Request, res: Response) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
+
+export const getCustomerCreditLedger = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      include: {
+        creditTransactions: {
+          orderBy: { createdAt: 'desc' },
+          take: 50
+        }
+      } as any
+    });
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+    const availableCredit = customer.creditLimit > 0 ? Math.max(0, customer.creditLimit - (customer.creditBalance || 0)) : null;
+    res.json({
+      success: true,
+      data: {
+        customer: {
+          id: customer.id,
+          name: `${customer.firstName || ''} ${customer.lastName || ''}`.trim() || customer.companyName || 'Unknown',
+          companyName: customer.companyName,
+          phone: customer.phone,
+          customerType: customer.customerType,
+          creditLimit: customer.creditLimit,
+          creditBalance: customer.creditBalance || 0,
+          availableCredit,
+          vehicleNumber: customer.vehicleNumber
+        },
+        transactions: (customer as any).creditTransactions || []
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
+export const settleCustomerCredit = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { amount, paymentMethod, reference, notes, sessionId } = req.body;
+    const settlementAmount = parseFloat(amount);
+    if (isNaN(settlementAmount) || settlementAmount <= 0) {
+      return res.status(400).json({ error: 'Valid positive settlement amount is required' });
+    }
+
+    const customer = await prisma.customer.findUnique({ where: { id } });
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const updatedCustomer = await prisma.customer.update({
+      where: { id },
+      data: { creditBalance: { decrement: settlementAmount } }
+    });
+
+    const ledger = await prisma.customerCreditLedger.create({
+      data: {
+        customerId: id,
+        type: 'SETTLEMENT',
+        amount: settlementAmount,
+        balanceAfter: updatedCustomer.creditBalance,
+        paymentMethod: paymentMethod || 'CASH',
+        reference: reference || null,
+        notes: notes || 'Debt Settlement payment received'
+      }
+    });
+
+    if (sessionId && (paymentMethod === 'CASH' || !paymentMethod)) {
+      await prisma.posSession.update({
+        where: { id: sessionId },
+        data: { totalCashSales: { increment: settlementAmount } }
+      }).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      data: {
+        newBalance: updatedCustomer.creditBalance,
+        ledger
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+

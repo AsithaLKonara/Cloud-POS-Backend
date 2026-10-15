@@ -414,7 +414,105 @@ async function seedOilRetail() {
     }
   }
 
-  console.log('=== Oil Retail Catalog Seed Completed Successfully! ===');
+  console.log('--- Seeding B2B Garages & Commercial Fleet Accounts ---');
+  const b2bAccounts = [
+    {
+      companyName: 'Pitstop AutoCare & Hybrid Solutions',
+      firstName: 'Sunil',
+      lastName: 'Perera',
+      phone: '0771234567',
+      email: 'pitstop.autocare@gmail.com',
+      customerType: 'GARAGE_WORKSHOP',
+      creditLimit: 250000,
+      creditBalance: 65000,
+      vehicleNumber: 'WP CAB-4821',
+      notes: 'Premier hybrid workshop in Kottawa. Buys 0W-20 drums and Denso filters weekly.',
+    },
+    {
+      companyName: 'Lanka Freight Express Fleet',
+      firstName: 'Dammika',
+      lastName: 'Fernando',
+      phone: '0719876543',
+      email: 'fleet@lankafreight.lk',
+      customerType: 'COMMERCIAL_FLEET',
+      creditLimit: 500000,
+      creditBalance: 142000,
+      vehicleNumber: 'WP NB-8899',
+      notes: 'Commercial fleet of 18 delivery trucks. Purchases 15W-40 208L drums on 30-day terms.',
+    },
+    {
+      companyName: 'City Master Motors & Diagnostic Lab',
+      firstName: 'Roshan',
+      lastName: 'Alwis',
+      phone: '0703344556',
+      email: 'citymaster.motors@yahoo.com',
+      customerType: 'GARAGE_WORKSHOP',
+      creditLimit: 150000,
+      creditBalance: 24500,
+      vehicleNumber: 'WP CAR-1200',
+      notes: 'General mechanical repair shop. Purchases ATF, Coolants, and Spin-on filters.',
+    },
+    {
+      companyName: 'Walk-in Retail / Counter Customer',
+      firstName: 'Kamal',
+      lastName: 'Gunawardena',
+      phone: '0761122334',
+      email: 'kamal.guna@gmail.com',
+      customerType: 'RETAIL',
+      creditLimit: 0,
+      creditBalance: 0,
+      vehicleNumber: 'WP CAA-9912',
+      notes: 'Retail customer (Toyota Aqua owner). Pays cash/card at counter.',
+    },
+  ];
+
+  for (const acc of b2bAccounts) {
+    const cust = await prisma.customer.upsert({
+      where: { phone: acc.phone },
+      update: {
+        companyName: acc.companyName,
+        customerType: acc.customerType,
+        creditLimit: acc.creditLimit,
+        creditBalance: acc.creditBalance,
+        vehicleNumber: acc.vehicleNumber,
+        notes: acc.notes,
+      },
+      create: {
+        companyName: acc.companyName,
+        firstName: acc.firstName,
+        lastName: acc.lastName,
+        phone: acc.phone,
+        email: acc.email,
+        customerType: acc.customerType,
+        creditLimit: acc.creditLimit,
+        creditBalance: acc.creditBalance,
+        vehicleNumber: acc.vehicleNumber,
+        notes: acc.notes,
+        isGuest: false,
+      },
+    });
+
+    if (acc.creditBalance > 0) {
+      const existingLedger = await prisma.customerCreditLedger.findFirst({
+        where: { customerId: cust.id },
+      });
+      if (!existingLedger) {
+        await prisma.customerCreditLedger.create({
+          data: {
+            customerId: cust.id,
+            type: 'CHARGE',
+            amount: acc.creditBalance,
+            balanceAfter: acc.creditBalance,
+            paymentMethod: 'CREDIT_ACCOUNT',
+            reference: 'INV-INITIAL-BALANCE',
+            notes: 'Opening Outstanding Credit Balance for Workshop Account',
+          },
+        });
+      }
+    }
+  }
+
+  console.log('=== Oil Retail Catalog & B2B Seed Completed Successfully! ===');
 }
 
 seedOilRetail()

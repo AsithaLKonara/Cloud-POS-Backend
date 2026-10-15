@@ -142,23 +142,27 @@ model PosTerminal {
 }
 
 model PosSession {
-  id              String      @id @default(uuid())
-  branchId        String
-  terminalId      String
-  userId          String
-  status          String      @default("OPEN")
-  openingFloat    Float       @default(0)
-  expectedClosing Float?
-  actualClosing   Float?
-  variance        Float?
-  openedAt        DateTime    @default(now())
-  closedAt        DateTime?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  orders          Order[]
-  branch          Branch      @relation(fields: [branchId], references: [id])
-  terminal        PosTerminal @relation(fields: [terminalId], references: [id])
-  user            User        @relation(fields: [userId], references: [id])
+  id               String      @id @default(uuid())
+  branchId         String
+  terminalId       String
+  userId           String
+  status           String      @default("OPEN")
+  openingFloat     Float       @default(0)
+  expectedClosing  Float?
+  actualClosing    Float?
+  variance         Float?
+  totalCashSales   Float?      @default(0)
+  totalCardSales   Float?      @default(0)
+  totalCreditSales Float?      @default(0)
+  closingNotes     String?
+  openedAt         DateTime    @default(now())
+  closedAt         DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  orders           Order[]
+  branch           Branch      @relation(fields: [branchId], references: [id])
+  terminal         PosTerminal @relation(fields: [terminalId], references: [id])
+  user             User        @relation(fields: [userId], references: [id])
 
   @@index([branchId])
   @@index([terminalId])
@@ -329,22 +333,45 @@ model CollectionProduct {
 }
 
 model Customer {
-  id             String               @id @default(uuid())
-  phone          String               @unique
-  email          String?              @unique
-  firstName      String?
-  lastName       String?
-  isGuest        Boolean              @default(true)
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  addresses      Address[]
-  carts          Cart[]
-  loyaltyAccount LoyaltyAccount?
-  orders         Order[]
-  payments       PaymentTransaction[]
-  returnRequests ReturnRequest[]
-  reviews        Review[]
-  wishlist       Wishlist?
+  id                 String                 @id @default(uuid())
+  phone              String                 @unique
+  email              String?                @unique
+  firstName          String?
+  lastName           String?
+  companyName        String?
+  customerType       String                 @default("RETAIL") // RETAIL, GARAGE_WORKSHOP, COMMERCIAL_FLEET
+  creditLimit        Float                  @default(0)
+  creditBalance      Float                  @default(0)
+  vehicleNumber      String?
+  notes              String?
+  isGuest            Boolean                @default(true)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  addresses          Address[]
+  carts              Cart[]
+  loyaltyAccount     LoyaltyAccount?
+  orders             Order[]
+  payments           PaymentTransaction[]
+  returnRequests     ReturnRequest[]
+  reviews            Review[]
+  wishlist           Wishlist?
+  creditTransactions CustomerCreditLedger[]
+}
+
+model CustomerCreditLedger {
+  id            String    @id @default(uuid())
+  customerId    String
+  orderId       String?
+  type          String    // CHARGE, SETTLEMENT, ADJUSTMENT
+  amount        Float
+  balanceAfter  Float
+  paymentMethod String?   // CASH, CARD, BANK_TRANSFER, CHEQUE
+  reference     String?   // Invoice #, Cheque #, Bank ref
+  notes         String?
+  createdAt     DateTime  @default(now())
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
 }
 
 model Address {
@@ -436,16 +463,17 @@ model Order {
 }
 
 model OrderItem {
-  id              String         @id @default(uuid())
-  orderId         String
-  variantId       String
+  id                  String         @id @default(uuid())
+  orderId             String
+  variantId           String
   quantity            Int
+  dispensedVolumeLiters Float?
   priceAtPurchase     Float
   costPriceAtPurchase Float          @default(0)
   createdAt           DateTime       @default(now())
-  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  variant         ProductVariant @relation(fields: [variantId], references: [id])
-  returnItems     ReturnItem[]
+  order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant             ProductVariant @relation(fields: [variantId], references: [id])
+  returnItems         ReturnItem[]
 
   @@index([orderId])
   @@index([variantId])

@@ -56,10 +56,15 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
       
       return {
         id: c.id,
-        name: `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown',
+        name: `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.companyName || 'Unknown',
+        companyName: c.companyName || null,
         phone: c.phone || 'N/A',
         email: c.email || 'N/A',
-        type: c.isGuest ? 'Guest' : 'Registered',
+        customerType: c.customerType || (c.isGuest ? 'RETAIL' : 'REGISTERED'),
+        creditLimit: c.creditLimit || 0,
+        creditBalance: c.creditBalance || 0,
+        vehicleNumber: c.vehicleNumber || null,
+        type: c.customerType === 'GARAGE_WORKSHOP' ? 'Workshop / Garage' : c.customerType === 'COMMERCIAL_FLEET' ? 'Commercial Fleet' : (c.isGuest ? 'Retail' : 'Registered'),
         orders: ordersCount,
         spent: `Rs. ${spent.toLocaleString()}`,
         lastActive: c.updatedAt.toLocaleDateString()

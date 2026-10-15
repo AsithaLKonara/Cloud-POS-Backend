@@ -18,4 +18,9 @@ router.get('/vouchers/:code', authenticateJWT, posController.validateVoucher);
 // Orders
 router.post('/orders', authenticateJWT, requirePermission("pos:sales_mode"), posController.processPosOrder);
 
+// Customer Credit & Garage Debt Settlements
+router.get('/customers/:id/credit', authenticateJWT, posController.getCustomerCreditLedger);
+router.post('/customers/:id/settle-credit', authenticateJWT, requirePermission("pos:sales_mode"), posController.settleCustomerCredit);
+
 export default router;
+
