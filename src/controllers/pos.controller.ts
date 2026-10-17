@@ -120,7 +120,11 @@ export const processPosOrder = async (req: Request, res: Response) => {
       shippingAddress, 
       items, 
       paymentMethod, 
-      appliedVouchers 
+      appliedVouchers,
+      diningOption,
+      tableId,
+      splitPayments,
+      metadata,
     } = req.body;
     
     const orderNumber = `POS-${Date.now()}`;
@@ -149,14 +153,22 @@ export const processPosOrder = async (req: Request, res: Response) => {
       if (!variant) return res.status(400).json({ error: `Variant ${item.variantId} not found` });
 
       const price = variant.salePrice ?? variant.price;
-      calculatedSubtotal += price * item.qty;
+      const modifiersTotal = Array.isArray(item.modifiers)
+        ? item.modifiers.reduce((sum: number, mod: any) => sum + (Number(mod.price) || 0), 0)
+        : 0;
+      const itemUnitPrice = price + modifiersTotal;
+      calculatedSubtotal += itemUnitPrice * item.qty;
 
       orderItems.push({
         variantId: item.variantId,
         quantity: Math.max(1, Math.round(item.qty)),
         dispensedVolumeLiters: item.dispensedVolumeLiters || (item.qty % 1 !== 0 ? item.qty : null),
-        priceAtPurchase: price,
-        costPriceAtPurchase: variant.costPrice ?? 0
+        priceAtPurchase: itemUnitPrice,
+        costPriceAtPurchase: variant.costPrice ?? 0,
+        notes: item.notes || null,
+        staffId: item.staffId || null,
+        modifiers: item.modifiers || null,
+        attributes: item.attributes || null,
       });
     }
 
@@ -227,13 +239,17 @@ export const processPosOrder = async (req: Request, res: Response) => {
     }
 
     // 2. Create Order
+    const effectivePaymentMethod = isCredit 
+      ? 'CREDIT_ACCOUNT' 
+      : (Array.isArray(splitPayments) && splitPayments.length > 0 ? 'SPLIT' : paymentMethod);
+
     const order = await prisma.order.create({
       data: {
         orderNumber,
         type: 'POS',
         status: 'DELIVERED', // POS orders are delivered instantly
         paymentStatus: isCredit ? 'UNPAID' : 'PAID',
-        paymentMethod: isCredit ? 'CREDIT_ACCOUNT' : paymentMethod,
+        paymentMethod: effectivePaymentMethod,
         subtotal: calculatedSubtotal,
         tax: calculatedTax,
         shippingFee: 0,
@@ -242,6 +258,10 @@ export const processPosOrder = async (req: Request, res: Response) => {
         posSessionId: sessionId,
         customerId: finalCustomerId || undefined,
         shippingAddress: shippingAddress || undefined,
+        diningOption: diningOption || 'TAKEAWAY',
+        tableId: tableId || null,
+        splitPayments: splitPayments || null,
+        metadata: metadata || null,
         items: {
           create: orderItems
         }
@@ -250,7 +270,8 @@ export const processPosOrder = async (req: Request, res: Response) => {
         items: {
           include: { variant: { include: { product: true } } }
         },
-        customer: true
+        customer: true,
+        diningTable: true,
       }
     });
     
@@ -285,7 +306,28 @@ export const processPosOrder = async (req: Request, res: Response) => {
 
     // 3.8 Update POS Session Metrics
     if (sessionId) {
-      if (paymentMethod === 'CASH') {
+      if (Array.isArray(splitPayments) && splitPayments.length > 0) {
+        for (const sp of splitPayments) {
+          const m = (sp.method || '').toUpperCase();
+          const amt = Number(sp.amount) || 0;
+          if (m === 'CASH') {
+            await prisma.posSession.update({
+              where: { id: sessionId },
+              data: { totalCashSales: { increment: amt } }
+            }).catch(() => {});
+          } else if (['CARD', 'VISA', 'MASTERCARD'].includes(m)) {
+            await prisma.posSession.update({
+              where: { id: sessionId },
+              data: { totalCardSales: { increment: amt } }
+            }).catch(() => {});
+          } else if (['CREDIT_ACCOUNT', 'GARAGE_CREDIT'].includes(m)) {
+            await prisma.posSession.update({
+              where: { id: sessionId },
+              data: { totalCreditSales: { increment: amt } }
+            }).catch(() => {});
+          }
+        }
+      } else if (paymentMethod === 'CASH') {
         await prisma.posSession.update({
           where: { id: sessionId },
           data: { totalCashSales: { increment: calculatedTotal } }
@@ -301,6 +343,14 @@ export const processPosOrder = async (req: Request, res: Response) => {
           data: { totalCreditSales: { increment: calculatedTotal } }
         }).catch(() => {});
       }
+    }
+
+    // 3.9 Update Table status if assigned
+    if (tableId) {
+      await (prisma as any).diningTable.update({
+        where: { id: tableId },
+        data: { status: 'AVAILABLE' }
+      }).catch(() => {});
     }
     
     // 4. Deduct Inventory
@@ -406,6 +456,129 @@ export const settleCustomerCredit = async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
+export const splitOrderEvenly = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { ways } = req.body;
+    const { SplitBillService } = require('../services/split-bill.service');
+    const result = await SplitBillService.splitEvenly(id, Number(ways) || 2);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to split bill' });
+  }
+};
+
+export const splitOrderByItems = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { groups } = req.body;
+    const { SplitBillService } = require('../services/split-bill.service');
+    const result = await SplitBillService.splitByItems(id, groups);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to split bill by items' });
+  }
+};
+
+export const getOrderReceipt = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const type = (req.query.type as any) || 'RETAIL';
+    const order = await (prisma as any).order.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: { variant: { include: { product: true } } },
+        },
+        customer: true,
+        branch: true,
+        diningTable: true,
+      },
+    });
+
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const { ReceiptService } = require('../services/receipt.service');
+    const payload = ReceiptService.formatReceipt({
+      type,
+      tenantName: (order.branch as any)?.name || 'Point of Sale',
+      currencySymbol: 'Rs.',
+      order: {
+        orderNumber: order.orderNumber,
+        createdAt: order.createdAt,
+        branchName: order.branch?.name,
+        customerName: order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : undefined,
+        customerPhone: order.customer?.phone,
+        diningOption: order.diningOption || 'TAKEAWAY',
+        tableName: (order as any).diningTable?.name,
+        metadata: order.metadata as any,
+        subtotal: order.subtotal,
+        discount: order.discount,
+        tax: order.tax,
+        total: order.total,
+        paymentMethod: order.paymentMethod || undefined,
+        splitPayments: (order as any).splitPayments || undefined,
+        items: order.items.map((it: any) => ({
+          name: it.variant?.product?.name || it.variant?.name || 'Item',
+          sku: it.variant?.sku,
+          quantity: it.quantity,
+          price: it.priceAtPurchase,
+          total: it.priceAtPurchase * it.quantity,
+          notes: it.notes,
+          modifiers: it.modifiers,
+        })),
+      },
+    });
+
+    res.json(payload);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to format receipt' });
+  }
+};
+
+export const getTables = async (req: Request, res: Response) => {
+  try {
+    const branchId = req.query.branchId as string;
+    const { TableService } = require('../services/table.service');
+    const tables = await TableService.getTables(branchId);
+    res.json(tables);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to fetch tables' });
+  }
+};
+
+export const createTable = async (req: Request, res: Response) => {
+  try {
+    const { name, zone, capacity, branchId } = req.body;
+    if (!name || !branchId) {
+      return res.status(400).json({ error: 'Name and branchId are required' });
+    }
+    const { TableService } = require('../services/table.service');
+    const table = await TableService.createTable({ name, zone, capacity, branchId });
+    res.status(201).json(table);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to create table' });
+  }
+};
+
+export const updateTableStatus = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const { TableService } = require('../services/table.service');
+    const table = await TableService.updateTableStatus(id, status);
+    res.json(table);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to update table status' });
   }
 };
 

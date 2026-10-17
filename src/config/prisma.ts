@@ -36,6 +36,7 @@ const TENANT_SCOPED_MODELS = new Set([
   'BranchExpense',
   'AuditLog',
   'Coupon',
+  'DiningTable',
 ]);
 
 /**
