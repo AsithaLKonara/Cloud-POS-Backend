@@ -1,7 +1,11 @@
 node_modules/
 dist/
 build/
-.env.*.local
+# Environment files
+.env
+.env.*
+.env*.local
+!.env.example
 .DS_Store
 *.log
 coverage/
