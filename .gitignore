@@ -12,4 +12,5 @@ coverage/
 databaseOLD/
 config.bat
 src/scripts/test-crud.ts
-
+dump.rdb
+cookies.txt

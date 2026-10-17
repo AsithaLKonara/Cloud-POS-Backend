@@ -49,6 +49,7 @@ import pnlRoutes from "./routes/pnl.routes";
 import tenantRoutes from "./routes/tenant.routes";
 import subscriptionRoutes from "./routes/subscription.routes";
 import tenantIntegrationRoutes from "./routes/tenant-integration.routes";
+import superadminRoutes from "./routes/superadmin.routes";
 import { RoleService } from "./services/role.service";
 import { SettingService } from "./services/setting.service";
 dotenv.config();
@@ -165,6 +166,7 @@ app.use(`${API_PREFIX}/pnl`, pnlRoutes);
 app.use(`${API_PREFIX}/tenants`, tenantRoutes);
 app.use(`${API_PREFIX}/subscriptions`, subscriptionRoutes);
 app.use(`${API_PREFIX}/integrations`, tenantIntegrationRoutes);
+app.use(`${API_PREFIX}/superadmin`, superadminRoutes);
 
 // Health Check
 app.get("/health", (req: Request, res: Response) => {
