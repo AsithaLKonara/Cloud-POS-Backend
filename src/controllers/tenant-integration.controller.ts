@@ -15,10 +15,11 @@ export class TenantIntegrationController {
 
   async updatePaymentGateway(req: Request, res: Response): Promise<void> {
     try {
-      const { tenantId, gateway } = req.params;
+      const tenantId = req.params.tenantId as string;
+      const gateway = req.params.gateway as any;
       const updated = await TenantIntegrationService.updatePaymentGateway(
         tenantId,
-        gateway as any,
+        gateway,
         req.body
       );
       res.status(200).json({
@@ -33,10 +34,11 @@ export class TenantIntegrationController {
 
   async updateCourier(req: Request, res: Response): Promise<void> {
     try {
-      const { tenantId, courier } = req.params;
+      const tenantId = req.params.tenantId as string;
+      const courier = req.params.courier as any;
       const updated = await TenantIntegrationService.updateCourier(
         tenantId,
-        courier as any,
+        courier,
         req.body
       );
       res.status(200).json({
@@ -51,7 +53,7 @@ export class TenantIntegrationController {
 
   async testConnection(req: Request, res: Response): Promise<void> {
     try {
-      const { tenantId } = req.params;
+      const tenantId = req.params.tenantId as string;
       const { type, provider } = req.body;
       const result = await TenantIntegrationService.testConnection(tenantId, type, provider);
       res.status(200).json({ success: true, data: result });

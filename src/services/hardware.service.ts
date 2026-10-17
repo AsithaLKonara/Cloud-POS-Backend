@@ -88,7 +88,7 @@ export class HardwareService {
 
     // Protocol 1: CAS format: "ST,GS,+  1.450kg" or "US,GS,+  0.820kg"
     const casMatch = clean.match(/(ST|US),\s*(GS|NT),\s*([+-]?\s*\d+\.?\d*)\s*(kg|g|lb)/i);
-    if (casMatch) {
+    if (casMatch && casMatch[1] && casMatch[3] && casMatch[4]) {
       const isStable = casMatch[1].toUpperCase() === 'ST';
       const weight = parseFloat(casMatch[3].replace(/\s+/g, ''));
       const unit = casMatch[4].toLowerCase() as 'kg' | 'g' | 'lb';
@@ -97,7 +97,7 @@ export class HardwareService {
 
     // Protocol 2: Toledo / Avery format: "W:  1.450kg" or "NET  1.450 kg"
     const toledoMatch = clean.match(/(?:W:|NET|WT:)\s*([+-]?\d+\.?\d*)\s*(kg|g|lb)/i);
-    if (toledoMatch) {
+    if (toledoMatch && toledoMatch[1] && toledoMatch[2]) {
       const weight = parseFloat(toledoMatch[1]);
       const unit = toledoMatch[2].toLowerCase() as 'kg' | 'g' | 'lb';
       return { weight: isNaN(weight) ? 0 : weight, unit, isStable: true, raw: clean };
@@ -105,7 +105,7 @@ export class HardwareService {
 
     // Protocol 3: Raw numeric stream
     const rawMatch = clean.match(/([+-]?\d+\.?\d*)\s*(kg|g|lb)?/i);
-    if (rawMatch) {
+    if (rawMatch && rawMatch[1]) {
       const weight = parseFloat(rawMatch[1]);
       const unit = (rawMatch[2]?.toLowerCase() || 'kg') as 'kg' | 'g' | 'lb';
       return { weight: isNaN(weight) ? 0 : weight, unit, isStable: true, raw: clean };
