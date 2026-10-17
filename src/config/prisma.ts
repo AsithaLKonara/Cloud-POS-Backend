@@ -37,6 +37,10 @@ const TENANT_SCOPED_MODELS = new Set([
   'AuditLog',
   'Coupon',
   'DiningTable',
+  'Supplier',
+  'PurchaseOrder',
+  'StockTransfer',
+  'InventoryBatch',
 ]);
 
 /**
