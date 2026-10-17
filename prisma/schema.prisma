@@ -36,6 +36,8 @@ model Tenant {
   taxRate          Float           @default(0.0)
   logoUrl          String?
   subscriptionTier String          @default("STANDARD")
+  maxBranches      Int             @default(3)
+  maxUsers         Int             @default(10)
   settings         Json?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt

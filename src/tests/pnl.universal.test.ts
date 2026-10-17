@@ -118,8 +118,8 @@ describe('Universal P&L & Financial Accounting (Task 6)', () => {
       // Operating Expenses = 150
       expect(statement.summary.operatingExpenses.total).toBe(150);
       expect(statement.summary.operatingExpenses.breakdown).toHaveLength(2);
-      expect(statement.summary.operatingExpenses.breakdown[0].category).toBe('RENT');
-      expect(statement.summary.operatingExpenses.breakdown[0].percentageOfExpenses).toBe(66.67);
+      expect(statement.summary.operatingExpenses.breakdown[0]!.category).toBe('RENT');
+      expect(statement.summary.operatingExpenses.breakdown[0]!.percentageOfExpenses).toBe(66.67);
 
       // Wastage Loss = 2 * 5 = 10
       expect(statement.summary.wastageLoss).toBe(10);
@@ -228,8 +228,8 @@ describe('Universal P&L & Financial Accounting (Task 6)', () => {
 
       expect(statement.branchId).toBe('ALL_BRANCHES');
       expect(statement.branchComparison).toHaveLength(2);
-      expect(statement.branchComparison[0].branchCode).toBe('DT-01');
-      expect(statement.branchComparison[1].branchCode).toBe('UT-02');
+      expect(statement.branchComparison![0]!.branchCode).toBe('DT-01');
+      expect(statement.branchComparison![1]!.branchCode).toBe('UT-02');
     });
   });
 });
