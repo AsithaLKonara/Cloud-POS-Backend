@@ -49,6 +49,8 @@ export const variantBasicSelect = {
       }
     }
   },
+  unit: true,
+  attributes: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.ProductVariantSelect;
@@ -61,6 +63,9 @@ export const productBasicSelect = {
   excerpt: true,
   status: true,
   productType: true,
+  trackInventory: true,
+  unit: true,
+  attributes: true,
   brand: true,
   viscosity: true,
   oilType: true,

@@ -15,7 +15,7 @@ export const getMyLoyalty = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const customer = await prisma.customer.findUnique({ where: { email: user.email } });
+    const customer = await prisma.customer.findFirst({ where: { email: user.email } });
     if (!customer) return res.status(404).json({ error: 'Customer profile not found' });
 
     const account = await loyaltyService.ensureLoyaltyAccount(customer.id);

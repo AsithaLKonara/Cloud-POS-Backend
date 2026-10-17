@@ -3,7 +3,7 @@ import { inventoryService } from './inventory.service';
 
 export const returnService = {
   verifyOrderForReturn: async (orderNumber: string, email: string) => {
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { orderNumber },
       include: {
         customer: true,
@@ -27,11 +27,11 @@ export const returnService = {
     }
 
     // Filter out items that have already been fully returned
-    const returnableItems = order.items.filter(item => {
-      const alreadyReturnedQty = item.returnItems.reduce((acc, r) => acc + r.quantity, 0);
+    const returnableItems = order.items.filter((item: any) => {
+      const alreadyReturnedQty = item.returnItems.reduce((acc: number, r: any) => acc + r.quantity, 0);
       return alreadyReturnedQty < item.quantity;
-    }).map(item => {
-      const alreadyReturnedQty = item.returnItems.reduce((acc, r) => acc + r.quantity, 0);
+    }).map((item: any) => {
+      const alreadyReturnedQty = item.returnItems.reduce((acc: number, r: any) => acc + r.quantity, 0);
       return {
         id: item.id,
         quantity: item.quantity - alreadyReturnedQty,

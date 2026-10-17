@@ -40,7 +40,7 @@ export const retryPayment = async (req: Request, res: Response, next: NextFuncti
     const orderNumber = req.params.orderNumber as string;
     const { paymentMethod } = req.body;
 
-    const order = await prisma.order.findUnique({ where: { orderNumber } });
+    const order = await prisma.order.findFirst({ where: { orderNumber } });
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
@@ -251,7 +251,7 @@ export const getPaymentMethods = async (req: Request, res: Response, next: NextF
 export const getPaymentStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const orderNumber = req.params.orderNumber as string;
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { orderNumber },
       select: { paymentStatus: true, status: true }
     });

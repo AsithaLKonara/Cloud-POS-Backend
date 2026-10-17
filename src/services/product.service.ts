@@ -120,7 +120,7 @@ export class ProductService {
 
   async getProductBySlug(slug: string) {
     return withCache(`product:slug:${slug}`, 900, async () => {
-      const product = await prisma.product.findUnique({
+      const product = await prisma.product.findFirst({
         where: { slug },
         select: productWithVariantsSelect,
       });
@@ -155,7 +155,7 @@ export class ProductService {
       let baseSlug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       let slug = baseSlug;
       let counter = 1;
-      while (await prisma.product.findUnique({ where: { slug } })) {
+      while (await prisma.product.findFirst({ where: { slug } })) {
         slug = `${baseSlug}-${counter}`;
         counter++;
       }
@@ -165,7 +165,7 @@ export class ProductService {
     const generateUniqueBarcode = async (): Promise<string> => {
       for (let i = 0; i < 10; i++) {
         const code = `20${Math.floor(10000000000 + Math.random() * 89999999999)}`;
-        const existing = await prisma.productVariant.findUnique({ where: { barcode: code } });
+        const existing = await prisma.productVariant.findFirst({ where: { barcode: code } });
         if (!existing) return code;
       }
       return `20${Date.now().toString().slice(-10)}`;

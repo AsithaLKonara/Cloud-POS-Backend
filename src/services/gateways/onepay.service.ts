@@ -135,7 +135,7 @@ export const onepayService = {
       throw new Error('Invalid OnePay webhook: missing order reference');
     }
 
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { orderNumber },
     });
 

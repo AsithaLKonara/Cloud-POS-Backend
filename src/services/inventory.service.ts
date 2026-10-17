@@ -186,6 +186,21 @@ export const inventoryService = {
     reference?: string;
   }, tx: any = prisma) {
     const { variantId, branchId, type, quantity, reason, reference } = data;
+
+    // Check if variant belongs to a product that does not track inventory (e.g. Services, Digital Goods)
+    const variantRecord = await tx.productVariant.findUnique({
+      where: { id: variantId },
+      include: { product: true }
+    });
+
+    if (variantRecord?.product && (variantRecord.product.trackInventory === false || variantRecord.product.productType === 'SERVICE')) {
+      return {
+        inventoryItem: null,
+        transaction: null,
+        skipped: true,
+      };
+    }
+
     const isDeduction = ['DEDUCT', 'SPILLAGE_WASTAGE', 'DAMAGE', 'INTERNAL_USE', 'TRANSFER_OUT'].includes(type);
     const delta = isDeduction ? -Math.abs(quantity) : Math.abs(quantity);
 
@@ -226,11 +241,6 @@ export const inventoryService = {
     await tx.productVariant.update({
       where: { id: variantId },
       data: { quantity: totalQuantity }
-    });
-
-    const variantRecord = await tx.productVariant.findUnique({
-      where: { id: variantId },
-      select: { costPrice: true }
     });
 
     const transaction = await tx.inventoryTransaction.create({

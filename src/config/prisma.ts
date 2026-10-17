@@ -25,32 +25,83 @@ basePrisma.$on('query' as never, (e: any) => {
   }
 });
 
+const TENANT_SCOPED_MODELS = new Set([
+  'Category',
+  'Product',
+  'Branch',
+  'PosTerminal',
+  'PosSession',
+  'Order',
+  'Customer',
+  'BranchExpense',
+  'AuditLog',
+  'Coupon',
+]);
+
 /**
- * Global Prisma Extension for Row-Level Security (RLS)
+ * Global Prisma Extension for Multi-Tenancy & Row-Level Security (RLS)
  * 
- * Intercepts every query. If there's an active AsyncLocalStorage context
- * (set by the rlsMiddleware), it wraps the query in a transaction that
- * injects the user session variables directly into PostgreSQL first.
+ * Intercepts every query:
+ * 1. Sets PostgreSQL session variables (app.current_tenant_id, app.current_user_id, etc.).
+ * 2. Automatically injects tenantId into query where clauses and mutations for tenant-scoped models.
  */
 const prisma = basePrisma.$extends({
   query: {
     $allModels: {
-      async $allOperations({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async $allOperations({ model, operation, args, query }: { model?: string; operation: string; args: any; query: (args: any) => Promise<any> }) {
         const ctx = requestContext.getStore();
         
-        // If there is no context (e.g., background job, startup), run normally
+        // If there is no context (e.g., background job, startup, migration), run query normally
         if (!ctx) {
           return query(args);
         }
 
         const isAdmin = ctx.isAdmin || false;
+        const isPlatformAdmin = ctx.isPlatformAdmin || false;
         const currentUserId = ctx.userId || '';
         const currentRole = ctx.role || 'GUEST';
+        const currentTenantId = ctx.tenantId || '';
 
-        // Wrap the actual query in a transaction to safely set the session variables
+        // Auto-inject tenantId into tenant-scoped models when tenantId is present and not explicitly querying globally
+        if (model && TENANT_SCOPED_MODELS.has(model) && currentTenantId && !isPlatformAdmin) {
+          args = args || {};
+
+          // Auto-scope reads
+          if (['findFirst', 'findMany', 'findUnique', 'count', 'aggregate', 'groupBy'].includes(operation)) {
+            args.where = {
+              ...args.where,
+              tenantId: currentTenantId,
+            };
+          }
+
+          // Auto-scope creates
+          if (operation === 'create' && args.data) {
+            if (!args.data.tenantId) {
+              args.data.tenantId = currentTenantId;
+            }
+          }
+
+          if (operation === 'createMany' && Array.isArray(args.data)) {
+            args.data = args.data.map((item: any) => ({
+              ...item,
+              tenantId: item.tenantId || currentTenantId,
+            }));
+          }
+
+          // Auto-scope updates & deletes
+          if (['updateMany', 'deleteMany'].includes(operation)) {
+            args.where = {
+              ...args.where,
+              tenantId: currentTenantId,
+            };
+          }
+        }
+
+        // Wrap the actual query in a transaction to safely set PostgreSQL session variables
         return basePrisma.$transaction(async (tx) => {
           await tx.$executeRaw`
-            SELECT set_config('app.current_user_id', ${currentUserId}, true),
+            SELECT set_config('app.current_tenant_id', ${currentTenantId}, true),
+                   set_config('app.current_user_id', ${currentUserId}, true),
                    set_config('app.current_role', ${currentRole}, true),
                    set_config('app.is_admin', ${isAdmin.toString()}, true)
           `;

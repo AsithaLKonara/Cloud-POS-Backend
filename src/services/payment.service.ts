@@ -86,7 +86,7 @@ export const paymentService = {
       const { kokoProvider } = require('./providers/koko.provider');
       const verification = kokoProvider.verifyWebhook(payload);
       
-      const order = await prisma.order.findUnique({ where: { orderNumber: verification.orderId } });
+      const order = await prisma.order.findFirst({ where: { orderNumber: verification.orderId } });
       if (!order) throw new Error('Order not found from webhook');
 
       // Check idempotency for Koko
@@ -184,7 +184,7 @@ export const paymentService = {
     const orderNumber = payload.orderNumber;
     if (!orderNumber) throw new Error('Invalid webhook payload: missing orderNumber');
 
-    const order = await prisma.order.findUnique({ where: { orderNumber } });
+    const order = await prisma.order.findFirst({ where: { orderNumber } });
     if (!order) throw new Error('Order not found from webhook');
 
     const statusMap: Record<string, string> = {

@@ -10,15 +10,22 @@ import { requestContext } from '../context/RequestContext';
  */
 export const rlsMiddleware = (req: Request, res: Response, next: NextFunction) => {
   const user = (req as any).user; // Set by authenticateJWT
-  
-  const isSuperAdmin = user?.roles?.some((r: string) => ['SUPER_ADMIN', 'ADMIN'].includes(r));
+  const isPlatformAdmin = user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN'].includes(r)) || false;
+  const isTenantAdmin = user?.roles?.some((r: string) => ['SUPER_ADMIN', 'ADMIN'].includes(r)) || false;
+
+  const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
+  const resolvedTenantId = (req as any).tenantId || user?.tenantId || headerTenantId || null;
+  const resolvedTenantSlug = (req as any).tenantSlug || user?.tenantSlug || (req.headers['x-tenant-slug'] as string) || null;
 
   const contextData = {
     userId: user?.userId || null,
     role: user?.role || 'GUEST',
-    isAdmin: isSuperAdmin || false,
-    // Super Admins get null (unrestricted). Staff get their assigned branchId.
-    branchId: isSuperAdmin ? null : (user?.branchId || null),
+    isAdmin: isTenantAdmin || isPlatformAdmin,
+    isPlatformAdmin,
+    tenantId: resolvedTenantId,
+    tenantSlug: resolvedTenantSlug,
+    // Tenant Admins / Platform Admins get null (unrestricted across branches). Branch staff get their assigned branchId.
+    branchId: (isTenantAdmin || isPlatformAdmin) ? null : (user?.branchId || null),
   };
 
   requestContext.run(contextData, () => {

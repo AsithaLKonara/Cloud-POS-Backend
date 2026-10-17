@@ -2,11 +2,18 @@ import prisma from './src/config/prisma';
 import bcrypt from 'bcryptjs';
 import { RoleService } from './src/services/role.service';
 import { SettingService } from './src/services/setting.service';
+import { TenantService } from './src/services/tenant.service';
 
 async function seedMaster() {
   console.log('====================================================');
   console.log('🚀 Starting Master Seed for Oil Retail POS & ERP');
   console.log('====================================================');
+
+  // 0. Primary Default Tenant & Backfill
+  console.log('\n[0/7] Ensuring Default Tenant & Multi-Tenant Scoping...');
+  const defaultTenant = await TenantService.getOrCreateDefaultTenant();
+  await TenantService.backfillLegacyDataToDefaultTenant();
+  console.log(`✓ Default Tenant Ready: ${defaultTenant.name} (${defaultTenant.slug})`);
 
   // 1. Roles & Permissions + Settings
   console.log('\n[1/7] Seeding RBAC Roles, Permissions & Settings...');
@@ -50,9 +57,9 @@ async function seedMaster() {
   const branchMap = new Map<string, any>();
   for (const bData of branchesData) {
     const b = await prisma.branch.upsert({
-      where: { code: bData.code },
+      where: { tenantId_code: { tenantId: defaultTenant.id, code: bData.code } },
       update: { name: bData.name, address: bData.address, phone: bData.phone, isActive: true },
-      create: bData,
+      create: { ...bData, tenantId: defaultTenant.id },
     });
     branchMap.set(bData.code, b);
   }
@@ -165,9 +172,9 @@ async function seedMaster() {
   const categoryMap = new Map<string, string>();
   for (const cat of categoriesData) {
     const existing = await prisma.category.upsert({
-      where: { slug: cat.slug },
+      where: { tenantId_slug: { tenantId: defaultTenant.id, slug: cat.slug } },
       update: { name: cat.name, description: cat.description },
-      create: { name: cat.name, slug: cat.slug, description: cat.description, status: 'Active' },
+      create: { name: cat.name, slug: cat.slug, description: cat.description, status: 'Active', tenantId: defaultTenant.id },
     });
     categoryMap.set(cat.slug, existing.id);
   }
@@ -305,7 +312,7 @@ async function seedMaster() {
   const variantList: any[] = [];
   for (const p of productsList) {
     const product = await prisma.product.upsert({
-      where: { slug: p.slug },
+      where: { tenantId_slug: { tenantId: defaultTenant.id, slug: p.slug } },
       update: {
         name: p.name,
         productType: p.productType,
@@ -330,6 +337,7 @@ async function seedMaster() {
         compatibleVehicles: p.compatibleVehicles,
         categoryId: p.categoryId,
         status: 'ACTIVE',
+        tenantId: defaultTenant.id,
       },
     });
 
@@ -441,7 +449,7 @@ async function seedMaster() {
   const customerMap = new Map<string, any>();
   for (const acc of b2bAccounts) {
     const cust = await prisma.customer.upsert({
-      where: { phone: acc.phone },
+      where: { tenantId_phone: { tenantId: defaultTenant.id, phone: acc.phone } },
       update: {
         companyName: acc.companyName,
         customerType: acc.customerType,
@@ -462,6 +470,7 @@ async function seedMaster() {
         vehicleNumber: acc.vehicleNumber,
         notes: acc.notes,
         isGuest: false,
+        tenantId: defaultTenant.id,
       },
     });
     customerMap.set(acc.phone, cust);

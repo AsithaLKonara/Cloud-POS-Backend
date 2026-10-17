@@ -13,7 +13,7 @@ router.get('/loyalty/:phone', checkoutRateLimiter, async (req, res) => {
   const phone = req.params.phone as string;
   try {
 
-    const customer = await prisma.customer.findUnique({ where: { phone } });
+    const customer = await prisma.customer.findFirst({ where: { phone } });
     if (!customer) {
       return res.json({ loyaltyPoints: 0 });
     }

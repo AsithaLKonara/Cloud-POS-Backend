@@ -13,6 +13,7 @@ import { initFardarSync } from "./cron/fardarSync.cron";
 import { sanitizeMiddleware } from "./middlewares/sanitize.middleware";
 import { emergencyKillSwitch } from "./middlewares/killSwitch.middleware";
 import { phoneNormalizerMiddleware } from "./middlewares/phone.middleware";
+import { tenantMiddleware } from "./middlewares/tenant.middleware";
 
 // Import Routers
 import productRoutes from "./routes/product.routes";
@@ -125,6 +126,7 @@ app.use(API_PREFIX, globalApiLimiter);
 app.use(API_PREFIX, sanitizeMiddleware);
 app.use(API_PREFIX, emergencyKillSwitch);
 app.use(API_PREFIX, phoneNormalizerMiddleware);
+app.use(API_PREFIX, tenantMiddleware);
 
 app.use(`${API_PREFIX}/auth`, authRoutes);
 app.use(`${API_PREFIX}/roles`, roleRoutes);

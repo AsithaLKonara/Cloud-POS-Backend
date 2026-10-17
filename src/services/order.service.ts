@@ -29,7 +29,7 @@ export interface QuickDispatchPayload {
 
 export const orderService = {
   async searchCustomerByPhone(phone: string) {
-    const customer = await prisma.customer.findUnique({
+    const customer = await prisma.customer.findFirst({
       where: { phone },
       include: {
         addresses: {
@@ -45,12 +45,12 @@ export const orderService = {
   async createQuickDispatchOrder(data: QuickDispatchPayload) {
     return prisma.$transaction(async (tx) => {
       // 1. Find or create customer
-      let customer = await tx.customer.findUnique({
+      let customer = await tx.customer.findFirst({
         where: { phone: data.customer.phone }
       });
 
       if (!customer && data.customer.email) {
-        customer = await tx.customer.findUnique({
+        customer = await tx.customer.findFirst({
           where: { email: data.customer.email }
         });
       }
@@ -71,7 +71,7 @@ export const orderService = {
         if (!customer.lastName && data.customer.lastName) updateData.lastName = data.customer.lastName;
         
         if (!customer.email && data.customer.email) {
-          const emailTaken = await tx.customer.findUnique({ where: { email: data.customer.email } });
+          const emailTaken = await tx.customer.findFirst({ where: { email: data.customer.email } });
           if (!emailTaken) updateData.email = data.customer.email;
         }
 
@@ -501,7 +501,7 @@ export const orderService = {
   },
 
   async getOrderConfirmation(orderNumber: string) {
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { orderNumber },
       include: {
         items: {
@@ -529,7 +529,7 @@ export const orderService = {
   },
 
   async trackOrder(orderNumber: string, phone: string) {
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { orderNumber },
       include: { customer: true, items: { include: { variant: { include: { product: true } } } } }
     });

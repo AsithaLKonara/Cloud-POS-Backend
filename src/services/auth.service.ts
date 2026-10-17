@@ -142,22 +142,28 @@ export class AuthService {
     });
 
     // Also mirror this user to the Customer table for the Admin Dashboard
-    const customer = await prisma.customer.upsert({
-      where: { email },
-      update: {
-        firstName: displayName?.split(' ')[0] || "Unknown",
-        lastName: displayName?.split(' ').slice(1).join(' ') || "",
-        phone: input.phone || "0000000000",
-        isGuest: false,
-      },
-      create: {
-        email,
-        firstName: displayName?.split(' ')[0] || "Unknown",
-        lastName: displayName?.split(' ').slice(1).join(' ') || "",
-        phone: input.phone || "0000000000",
-        isGuest: false,
-      }
-    });
+    let customer = await prisma.customer.findFirst({ where: { email } });
+    if (customer) {
+      customer = await prisma.customer.update({
+        where: { id: customer.id },
+        data: {
+          firstName: displayName?.split(' ')[0] || "Unknown",
+          lastName: displayName?.split(' ').slice(1).join(' ') || "",
+          phone: input.phone || customer.phone || "0000000000",
+          isGuest: false,
+        },
+      });
+    } else {
+      customer = await prisma.customer.create({
+        data: {
+          email,
+          firstName: displayName?.split(' ')[0] || "Unknown",
+          lastName: displayName?.split(' ').slice(1).join(' ') || "",
+          phone: input.phone || "0000000000",
+          isGuest: false,
+        },
+      });
+    }
 
     try {
       await loyaltyService.migrateGuestOrders(customer.id, customer.email, customer.phone);

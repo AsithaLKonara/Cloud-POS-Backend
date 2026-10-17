@@ -6,17 +6,72 @@ datasource db {
   provider = "postgresql"
 }
 
+enum BusinessType {
+  RETAIL
+  RESTAURANT_CAFE
+  SALON_SPA
+  PHARMACY_CLINIC
+  GROCERY_SUPERMARKET
+  AUTOMOTIVE_SERVICES
+  WHOLESALE_DISTRIBUTION
+  GENERAL_SERVICES
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  CANCELLED
+}
+
+model Tenant {
+  id               String          @id @default(uuid())
+  name             String
+  slug             String          @unique
+  businessType     BusinessType    @default(RETAIL)
+  status           TenantStatus    @default(ACTIVE)
+  currency         String          @default("LKR")
+  currencySymbol   String          @default("Rs.")
+  timezone         String          @default("Asia/Colombo")
+  taxRate          Float           @default(0.0)
+  logoUrl          String?
+  subscriptionTier String          @default("STANDARD")
+  settings         Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  users            User[]
+  branches         Branch[]
+  categories       Category[]
+  products         Product[]
+  posTerminals     PosTerminal[]
+  posSessions      PosSession[]
+  orders           Order[]
+  customers        Customer[]
+  expenses         BranchExpense[]
+  auditLogs        AuditLog[]
+  coupons          Coupon[]
+
+  @@index([slug])
+  @@index([status])
+}
+
 model Category {
   id             String          @id @default(uuid())
   name           String
-  slug           String          @unique
+  slug           String
   description    String?
+  tenantId       String?
+  tenant         Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   imageUrl       String?
   status         String          @default("Active")
   legacyProducts LegacyProduct[]
   products       Product[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
 }
 
 model LegacyProduct {
@@ -44,11 +99,13 @@ model LegacyProduct {
 model Product {
   id                String              @id @default(uuid())
   name              String
-  slug              String              @unique
-  barcode           String?             @unique
+  slug              String
+  barcode           String?
   description       String?
   excerpt           String?
   categoryId        String?
+  tenantId          String?
+  tenant            Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   allowedPaymentMethods String[]        @default(["COD", "Mintpay", "Koko", "Payzy", "OnePay"])
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
@@ -56,8 +113,11 @@ model Product {
   sizeGuideEnabled  Boolean             @default(false)
   sizeGuideImageUrl String?
   status            String              @default("ACTIVE")
-  productType       String              @default("LUBRICANT") // LUBRICANT, FILTER, BATTERY, CAR_CARE, SPARE_PART, ACCESSORY, SERVICE, GENERAL
+  productType       String              @default("PHYSICAL") // PHYSICAL, SERVICE, DIGITAL, BUNDLE, LUBRICANT, etc.
+  trackInventory    Boolean             @default(true)      // false for services, appointments, digital items
+  unit              String              @default("PIECE")   // PIECE, KG, GRAM, LITER, ML, HOUR, SERVICE, BOX, PACK
   brand             String?
+  attributes        Json?               // Universal dynamic industry-specific attributes
   viscosity         String?             // e.g. 0W-20, 5W-30, 10W-40, 15W-40, 20W-50, SAE 90, ATF, DOT 4 (null for non-oil)
   oilType           String?             // e.g. Full Synthetic, Semi-Synthetic, Mineral, Heavy Duty Diesel (null for non-oil)
   apiStandard       String?             // e.g. API SP, ILSAC GF-6, ACEA C3, JASO MA2
@@ -69,10 +129,13 @@ model Product {
   reviews           Review[]
   wishlistItems     WishlistItem[]
 
+  @@unique([tenantId, slug])
   @@index([categoryId])
   @@index([createdAt])
   @@index([productType])
   @@index([brand])
+  @@index([tenantId])
+  @@index([tenantId, barcode])
 }
 
 model ProductVariant {
@@ -85,6 +148,8 @@ model ProductVariant {
   salePrice          Float?
   costPrice          Float                  @default(0)
   wholesalePrice     Float?
+  unit               String?                // Specific unit for this variant (e.g. 1L, 4L, KG, Hour, Single, Pack of 4)
+  attributes         Json?                  // Variant-specific dynamic attributes (e.g. { size: "XL", color: "Red" })
   packUnit           String?                // e.g. 1L, 4L, 5L, 20L, 208L Drum, Piece, Can, Bottle, Box, Liter Dispensed
   unitVolumeLiters   Float?                 // Volume in liters for bulk/dispensing calculations
   stockStatus        String                 @default("instock")
@@ -110,7 +175,9 @@ model ProductVariant {
 model Branch {
   id           String                 @id @default(uuid())
   name         String
-  code         String                 @unique
+  code         String
+  tenantId     String?
+  tenant       Tenant?                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   address      String?
   phone        String?
   type         String                 @default("RETAIL")
@@ -128,6 +195,9 @@ model Branch {
   transfersIn  StockTransfer[]        @relation("ToBranch")
   staff        User[]                 @relation("BranchStaff")
   expenses     BranchExpense[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
 }
 
 model PosTerminal {
@@ -135,10 +205,15 @@ model PosTerminal {
   name      String
   status    String       @default("ACTIVE")
   branchId  String
+  tenantId  String?
+  tenant    Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
   sessions  PosSession[]
   branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([branchId])
 }
 
 model PosSession {
@@ -146,6 +221,8 @@ model PosSession {
   branchId         String
   terminalId       String
   userId           String
+  tenantId         String?
+  tenant           Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   status           String      @default("OPEN")
   openingFloat     Float       @default(0)
   expectedClosing  Float?
@@ -164,6 +241,7 @@ model PosSession {
   terminal         PosTerminal @relation(fields: [terminalId], references: [id])
   user             User        @relation(fields: [userId], references: [id])
 
+  @@index([tenantId])
   @@index([branchId])
   @@index([terminalId])
   @@index([userId])
@@ -239,6 +317,8 @@ model User {
   email             String             @unique
   password          String
   name              String?
+  tenantId          String?
+  tenant            Tenant?            @relation(fields: [tenantId], references: [id], onDelete: SetNull)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   branchId          String?
@@ -253,6 +333,8 @@ model User {
   branch            Branch?            @relation("BranchStaff", fields: [branchId], references: [id])
   userRoles         UserRole[]
   loggedExpenses    BranchExpense[]
+
+  @@index([tenantId])
 }
 
 model Role {
@@ -334,8 +416,8 @@ model CollectionProduct {
 
 model Customer {
   id                 String                 @id @default(uuid())
-  phone              String                 @unique
-  email              String?                @unique
+  phone              String
+  email              String?
   firstName          String?
   lastName           String?
   companyName        String?
@@ -345,6 +427,8 @@ model Customer {
   vehicleNumber      String?
   notes              String?
   isGuest            Boolean                @default(true)
+  tenantId           String?
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
   addresses          Address[]
@@ -356,6 +440,9 @@ model Customer {
   reviews            Review[]
   wishlist           Wishlist?
   creditTransactions CustomerCreditLedger[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
 }
 
 model CustomerCreditLedger {
@@ -424,8 +511,10 @@ model CartItem {
 
 model Order {
   id                  String               @id @default(uuid())
-  orderNumber         String               @unique
+  orderNumber         String
   customerId          String?
+  tenantId            String?
+  tenant              Tenant?              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   status              String               @default("PENDING")
   paymentMethod       String?
   paymentStatus       String               @default("UNPAID")
@@ -457,9 +546,11 @@ model Order {
   payments            PaymentTransaction[]
   returnRequests      ReturnRequest[]
 
+  @@unique([tenantId, orderNumber])
   @@index([status, createdAt])
   @@index([customerId])
   @@index([branchId])
+  @@index([tenantId])
 }
 
 model OrderItem {
@@ -571,7 +662,9 @@ model StaticPage {
 model Coupon {
   id         String    @id @default(uuid())
   name       String
-  code       String    @unique
+  code       String
+  tenantId   String?
+  tenant     Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   type       String    @default("PERCENTAGE")
   value      Float
   usageLimit Int?
@@ -580,6 +673,9 @@ model Coupon {
   status     String    @default("ACTIVE")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
 }
 
 model FlashSale {
@@ -678,6 +774,8 @@ model Setting {
 model AuditLog {
   id        String   @id @default(uuid())
   userId    String?
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   action    String
   entity    String
   entityId  String?
@@ -687,6 +785,8 @@ model AuditLog {
   userAgent String?
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
 }
 
 model PushSubscription {
@@ -769,6 +869,8 @@ enum ReviewStatus {
 model BranchExpense {
   id          String    @id @default(uuid())
   branchId    String
+  tenantId    String?
+  tenant      Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category    String    // RENT, ELECTRICITY, WATER, SALARY, MAINTENANCE, EQUIPMENT, SUPPLIES, MARKETING, OTHER
   title       String
   amount      Float
@@ -781,5 +883,6 @@ model BranchExpense {
   branch      Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
   createdBy   User?     @relation(fields: [createdById], references: [id])
 
+  @@index([tenantId])
   @@index([branchId, date])
 }

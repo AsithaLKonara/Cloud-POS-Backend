@@ -80,7 +80,7 @@ export const analyticsService = {
       if (branchName === 'Online') {
         branchFilter = { branchId: null };
       } else {
-        const branch = await prisma.branch.findUnique({ where: { code: branchName.toUpperCase() } });
+        const branch = await prisma.branch.findFirst({ where: { code: branchName.toUpperCase() } });
         if (branch) {
           branchFilter = { branchId: branch.id };
         } else {

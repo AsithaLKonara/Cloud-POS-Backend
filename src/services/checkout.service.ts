@@ -127,12 +127,12 @@ export const checkoutService = {
 
 
     // 1. Identity Resolution
-    let customer = await prisma.customer.findUnique({
+    let customer = await prisma.customer.findFirst({
       where: { phone: customerData.phone },
     });
 
     if (!customer && customerData.email) {
-      customer = await prisma.customer.findUnique({
+      customer = await prisma.customer.findFirst({
         where: { email: customerData.email },
       });
     }

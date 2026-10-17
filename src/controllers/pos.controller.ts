@@ -174,6 +174,14 @@ export const processPosOrder = async (req: Request, res: Response) => {
 
     // 1.8 Inventory check
     for (const item of items) {
+      const variant = await prisma.productVariant.findUnique({
+        where: { id: item.variantId },
+        include: { product: true }
+      });
+      if (variant?.product && (variant.product.trackInventory === false || variant.product.productType === 'SERVICE')) {
+        continue;
+      }
+
       const inventory = await prisma.inventoryItem.findUnique({
         where: { variantId_branchId: { variantId: item.variantId, branchId } }
       });
@@ -185,7 +193,7 @@ export const processPosOrder = async (req: Request, res: Response) => {
     // 1.9 Customer Resolution
     let finalCustomerId = providedCustomerId;
     if (!finalCustomerId && customerPhone) {
-      let customer = await prisma.customer.findUnique({
+      let customer = await prisma.customer.findFirst({
         where: { phone: customerPhone },
       });
 
