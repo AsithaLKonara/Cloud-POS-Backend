@@ -520,12 +520,17 @@ model Customer {
   firstName          String?
   lastName           String?
   companyName        String?
-  customerType       String                 @default("RETAIL") // RETAIL, GARAGE_WORKSHOP, COMMERCIAL_FLEET
+  customerType       String                 @default("RETAIL") // RETAIL, WHOLESALE, CORPORATE, COMMERCIAL, VIP
+  tags               String[]               @default([])
+  birthday           DateTime?
+  gender             String?
+  taxNumber          String?
   creditLimit        Float                  @default(0)
   creditBalance      Float                  @default(0)
   vehicleNumber      String?
   notes              String?
-  isGuest            Boolean                @default(true)
+  metadata           Json?
+  isGuest            Boolean                @default(false)
   tenantId           String?
   tenant             Tenant?                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt          DateTime               @default(now())
