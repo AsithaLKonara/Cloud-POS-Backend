@@ -160,17 +160,25 @@ export class AuthController {
       const refreshToken = req.cookies?.laural_refresh_token || req.body?.refreshToken;
       const userId = req.user?.userId;
 
-      await AuthService.logoutUser(refreshToken, userId);
+      if (refreshToken || userId) {
+        try {
+          await AuthService.logoutUser(refreshToken, userId);
+        } catch (e: any) {
+          logger.warn(`Failed to revoke refresh token in database on logout: ${e?.message}`);
+        }
+      }
 
       const isProd = process.env.NODE_ENV === "production";
       const cookieOptions = {
         httpOnly: true,
         secure: isProd,
         sameSite: isProd ? "none" as const : "lax" as const,
+        path: "/",
       };
 
       res.clearCookie("laural_access_token", cookieOptions);
       res.clearCookie("laural_refresh_token", cookieOptions);
+      res.clearCookie("laural_role", { ...cookieOptions, httpOnly: false });
 
       res.status(200).json({
         success: true,

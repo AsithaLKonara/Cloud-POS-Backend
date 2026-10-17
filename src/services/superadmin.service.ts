@@ -1,5 +1,5 @@
 import prisma from '../config/prisma';
-import redisClient from '../config/redis';
+import { redisClient } from '../config/redis';
 import { logger } from '../utils/logger';
 import { SubscriptionService, DEFAULT_PLANS } from './subscription.service';
 
@@ -138,7 +138,7 @@ export class SuperAdminService {
       if (t.status === 'ACTIVE' || t.status === 'TRIAL') {
         const tier = (t.subscriptionTier || 'STARTER').toUpperCase();
         const plan = DEFAULT_PLANS[tier] || DEFAULT_PLANS.STARTER;
-        calculatedMrr += plan.monthlyLkr;
+        calculatedMrr += plan?.monthlyLkr || 4500;
       }
     }
 
@@ -332,8 +332,9 @@ export class SuperAdminService {
     const redisStart = Date.now();
     let redisStatus: 'ONLINE' | 'OFFLINE' = 'ONLINE';
     try {
-      if (redisClient && redisClient.status === 'ready') {
-        await redisClient.ping();
+      if (redisClient) {
+        const pong = await redisClient.ping();
+        redisStatus = pong === 'PONG' ? 'ONLINE' : 'OFFLINE';
       } else {
         redisStatus = 'OFFLINE';
       }

@@ -68,7 +68,7 @@ export class SuperAdminController {
 
   async provisionTurnkeyTenant(req: Request, res: Response): Promise<void> {
     try {
-      const result = await TenantService.provisionTurnkeyTenant(req.body);
+      const result = await TenantService.provisionTenant(req.body);
       res.status(201).json({ success: true, message: 'Turnkey tenant provisioned successfully', data: result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message || 'Tenant provisioning failed' });
