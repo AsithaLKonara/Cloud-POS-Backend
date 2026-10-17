@@ -1,7 +1,7 @@
 {
-  "name": "laural-clothing-backend",
-  "version": "1.0.0",
-  "description": "Commerce API for Laural Clothing",
+  "name": "xonit-pos-backend",
+  "version": "2.0.0",
+  "description": "Enterprise Multi-Tenant POS, ERP, CRM & P&L Engine for XONIT POS",
   "main": "dist/src/index.js",
   "scripts": {
     "start": "node dist/src/index.js",
