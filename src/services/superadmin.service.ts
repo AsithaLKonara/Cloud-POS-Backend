@@ -1,7 +1,7 @@
 import prisma from '../config/prisma';
 import { redisClient } from '../config/redis';
 import { logger } from '../utils/logger';
-import { SubscriptionService, DEFAULT_PLANS } from './subscription.service';
+import { SubscriptionService, DEFAULT_PLANS, PlanConfig } from './subscription.service';
 
 export interface PlatformKPIs {
   totalTenants: number;
@@ -54,6 +54,52 @@ export interface ClusterTelemetry {
     status: 'ACTIVE';
   }>;
   uptimeSeconds: number;
+}
+
+export interface MonthlyAnalyticsSeriesItem {
+  month: string;
+  monthKey: string;
+  revenueLkr: number;
+  gmvLkr: number;
+  orderCount: number;
+  newTenantsCount: number;
+}
+
+export interface PlatformMoMGrowth {
+  mrrGrowthPct: number;
+  tenantsGrowthPct: number;
+  gmvGrowthPct: number;
+  ordersGrowthPct: number;
+}
+
+export interface MonthlyAnalyticsResponse {
+  series: MonthlyAnalyticsSeriesItem[];
+  momGrowth: PlatformMoMGrowth;
+}
+
+export interface PlatformRevenueStream {
+  id: string;
+  name: string;
+  amountLkr: number;
+  pct: number;
+  color: string;
+  dotClass: string;
+  highlight?: boolean;
+}
+
+export interface PlatformRevenueBreakdownResponse {
+  totalInflowLkr: number;
+  streams: PlatformRevenueStream[];
+}
+
+export interface TopOutletPerformanceItem {
+  id: string;
+  branchName: string;
+  tenantName: string;
+  businessType: string;
+  totalOrders: number;
+  gmvLkr: number;
+  velocityPct: number;
 }
 
 const DEFAULT_PLATFORM_EXPENSES: PlatformExpenseItem[] = [
@@ -137,7 +183,8 @@ export class SuperAdminService {
       // Only count active or paying tenants towards MRR
       if (t.status === 'ACTIVE' || t.status === 'TRIAL') {
         const tier = (t.subscriptionTier || 'STARTER').toUpperCase();
-        const plan = DEFAULT_PLANS[tier] || DEFAULT_PLANS.STARTER;
+        const effectiveTier = tier === 'PRO' ? 'GROWTH' : tier;
+        const plan = DEFAULT_PLANS[effectiveTier] || DEFAULT_PLANS.STARTER;
         calculatedMrr += plan?.monthlyLkr || 4500;
       }
     }
@@ -199,6 +246,232 @@ export class SuperAdminService {
       expensesBreakdown: expenses,
       recentInvoices: recentInvoices.slice(0, 10),
     };
+  }
+
+  /**
+   * Retrieves real historical 12-month analytics and MoM growth metrics from PostgreSQL
+   */
+  static async getMonthlyAnalytics(): Promise<MonthlyAnalyticsResponse> {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const seriesSlots: Array<{ month: string; monthKey: string; start: Date; end: Date }> = [];
+
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      seriesSlots.push({
+        month: months[d.getMonth()] || 'Jan',
+        monthKey,
+        start,
+        end,
+      });
+    }
+
+    const allTenants = await (prisma as any).tenant.findMany({
+      select: { id: true, createdAt: true, status: true, subscriptionTier: true },
+    });
+
+    // Query all orders within the 12-month interval
+    const oldestStart = seriesSlots[0]?.start || new Date();
+    const orders = await (prisma as any).order.findMany({
+      where: {
+        paymentStatus: 'PAID',
+        createdAt: { gte: oldestStart },
+      },
+      select: { id: true, total: true, createdAt: true },
+    });
+
+    const series: MonthlyAnalyticsSeriesItem[] = [];
+
+    for (const slot of seriesSlots) {
+      // Filter orders in this slot
+      const slotOrders = orders.filter((o: any) => o.createdAt >= slot.start && o.createdAt <= slot.end);
+      const gmvLkr = slotOrders.reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0);
+      const orderCount = slotOrders.length;
+
+      // Filter tenants registered on or before slot end
+      const activeInSlot = allTenants.filter((t: any) => t.createdAt <= slot.end && t.status !== 'CANCELLED');
+      let slotMrr = 0;
+      for (const t of activeInSlot) {
+        const tier = (t.subscriptionTier || 'STARTER').toUpperCase();
+        const effectiveTier = tier === 'PRO' ? 'GROWTH' : tier;
+        const plan = DEFAULT_PLANS[effectiveTier] || DEFAULT_PLANS.STARTER;
+        slotMrr += plan?.monthlyLkr || 4500;
+      }
+
+      // New tenants in this slot
+      const newTenantsCount = allTenants.filter((t: any) => t.createdAt >= slot.start && t.createdAt <= slot.end).length;
+
+      // Inflow = Subscription MRR + 0.5% of GMV
+      const revenueLkr = slotMrr + Number((gmvLkr * 0.005).toFixed(2));
+
+      series.push({
+        month: slot.month,
+        monthKey: slot.monthKey,
+        revenueLkr: Math.round(revenueLkr),
+        gmvLkr: Math.round(gmvLkr),
+        orderCount,
+        newTenantsCount,
+      });
+    }
+
+    // Calculate Month-over-Month (MoM) Growth Comparing Current Month (Index 11) with Previous Month (Index 10)
+    const cur = series[11];
+    const prev = series[10];
+
+    const calcGrowth = (current: number, previous: number): number => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Number((((current - previous) / previous) * 100).toFixed(1));
+    };
+
+    const momGrowth: PlatformMoMGrowth = {
+      mrrGrowthPct: calcGrowth(cur?.revenueLkr || 0, prev?.revenueLkr || 0),
+      tenantsGrowthPct: calcGrowth(cur?.newTenantsCount || 0, prev?.newTenantsCount || 0),
+      gmvGrowthPct: calcGrowth(cur?.gmvLkr || 0, prev?.gmvLkr || 0),
+      ordersGrowthPct: calcGrowth(cur?.orderCount || 0, prev?.orderCount || 0),
+    };
+
+    return {
+      series,
+      momGrowth,
+    };
+  }
+
+  /**
+   * Calculates live revenue breakdown by streams: Subscriptions, Gateway Margins, Branch Addons, Services
+   */
+  static async getRevenueBreakdown(): Promise<PlatformRevenueBreakdownResponse> {
+    const kpis = await this.getPlatformKPIs();
+    const subRevenue = kpis.mrrLkr;
+    const gatewayRevenue = Number((kpis.platformGmvLkr * 0.005).toFixed(2));
+
+    // Branch Addons: Count branches beyond base (1 per tenant) across active tenants
+    const tenants = await (prisma as any).tenant.findMany({
+      where: { status: 'ACTIVE' },
+      include: {
+        _count: {
+          select: { branches: true },
+        },
+      },
+    });
+
+    let extraBranchesCount = 0;
+    for (const t of tenants) {
+      const branchesCount = t._count?.branches || 1;
+      if (branchesCount > 1) {
+        extraBranchesCount += (branchesCount - 1);
+      }
+    }
+    const branchAddonRevenue = extraBranchesCount * 2000; // Rs. 2,000 / month / extra branch
+
+    // Custom invoices / professional services
+    const invoiceSetting = await (prisma as any).setting.findUnique({
+      where: { key: 'PLATFORM_INVOICE_LOGS' },
+    });
+    const invoices = invoiceSetting?.value ? JSON.parse(invoiceSetting.value) : [];
+    const customServicesRevenue = invoices
+      .filter((inv: any) => inv.type === 'PROFESSIONAL_SERVICES' || inv.billingCycle === 'SETUP')
+      .reduce((sum: number, inv: any) => sum + (inv.amountLkr || 0), 0);
+
+    const total = subRevenue + gatewayRevenue + branchAddonRevenue + customServicesRevenue;
+    const safeTotal = total > 0 ? total : 1;
+
+    const streams: PlatformRevenueStream[] = [
+      {
+        id: 'subscriptions',
+        name: 'Subscriptions',
+        amountLkr: subRevenue,
+        pct: total > 0 ? Math.round((subRevenue / safeTotal) * 100) : 100,
+        color: '#3B82F6',
+        dotClass: 'bg-blue-500',
+      },
+      {
+        id: 'gateway',
+        name: 'One-time Sales (0.5% Gateway)',
+        amountLkr: gatewayRevenue,
+        pct: total > 0 ? Math.round((gatewayRevenue / safeTotal) * 100) : 0,
+        color: '#10B981',
+        dotClass: 'bg-emerald-500',
+        highlight: true,
+      },
+      {
+        id: 'branches',
+        name: 'Branch Addons',
+        amountLkr: branchAddonRevenue,
+        pct: total > 0 ? Math.round((branchAddonRevenue / safeTotal) * 100) : 0,
+        color: '#F59E0B',
+        dotClass: 'bg-amber-500',
+      },
+      {
+        id: 'services',
+        name: 'Partnerships & APIs',
+        amountLkr: customServicesRevenue,
+        pct: total > 0 ? Math.round((customServicesRevenue / safeTotal) * 100) : 0,
+        color: '#8B5CF6',
+        dotClass: 'bg-purple-500',
+      },
+    ];
+
+    return {
+      totalInflowLkr: total,
+      streams,
+    };
+  }
+
+  /**
+   * Retrieves top performing multi-tenant branches ranked by sales volume & order count
+   */
+  static async getTopOutlets(limit = 5): Promise<TopOutletPerformanceItem[]> {
+    const branches = await (prisma as any).branch.findMany({
+      include: {
+        tenant: {
+          select: {
+            name: true,
+            businessType: true,
+          },
+        },
+        orders: {
+          where: { paymentStatus: 'PAID' },
+          select: { total: true },
+        },
+      },
+    });
+
+    const parsed = branches.map((b: any) => {
+      const orders = b.orders || [];
+      const totalOrders = orders.length;
+      const gmvLkr = orders.reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+
+      return {
+        id: b.id,
+        branchName: b.tenant?.name ? `${b.tenant.name} - ${b.name}` : b.name,
+        tenantName: b.tenant?.name || b.name,
+        businessType: b.tenant?.businessType || b.type || 'RETAIL',
+        totalOrders,
+        gmvLkr,
+        velocityPct: 0,
+      };
+    });
+
+    // Sort by order count descending, then GMV descending
+    parsed.sort((a: any, b: any) => {
+      if (b.totalOrders !== a.totalOrders) {
+        return b.totalOrders - a.totalOrders;
+      }
+      return b.gmvLkr - a.gmvLkr;
+    });
+
+    const highestOrders = parsed[0]?.totalOrders || 1;
+    const topOutlets = parsed.slice(0, limit).map((outlet: any) => ({
+      ...outlet,
+      velocityPct: highestOrders > 0 && outlet.totalOrders > 0
+        ? Math.round((outlet.totalOrders / highestOrders) * 100)
+        : Math.min(100, Math.round((outlet.gmvLkr / 100000) * 10)),
+    }));
+
+    return topOutlets;
   }
 
   /**
@@ -314,6 +587,121 @@ export class SuperAdminService {
         settings: updatedSettings,
       },
     });
+  }
+
+  /**
+   * Mutates subscription plan pricing and persists in PostgreSQL Setting table
+   */
+  static async updatePlanPrice(tierKey: string, monthlyLkr: number) {
+    const tier = tierKey.toUpperCase();
+    const effectiveTier = tier === 'PRO' ? 'GROWTH' : tier;
+    const plans = await SubscriptionService.getPlans();
+    const current = plans.find((p) => p.key === tier || (tier === 'PRO' && p.key === 'GROWTH')) || DEFAULT_PLANS[effectiveTier];
+    if (!current) throw new Error(`Subscription tier ${tier} not found`);
+
+    const quarterlyLkr = Math.round(monthlyLkr * 3 * 0.9);
+    const annualLkr = Math.round(monthlyLkr * 12 * 0.8);
+
+    const updatedPlan: PlanConfig = {
+      ...current,
+      monthlyLkr,
+      quarterlyLkr,
+      annualLkr,
+    };
+
+    // Load existing overrides
+    const setting = await (prisma as any).setting.findUnique({
+      where: { key: 'XONIT_SUBSCRIPTION_PLANS' },
+    });
+    const currentOverrides: Record<string, PlanConfig> = setting?.value ? JSON.parse(setting.value) : {};
+    currentOverrides[tier] = updatedPlan;
+    if (tier === 'GROWTH') {
+      currentOverrides.PRO = { ...updatedPlan, key: 'PRO' };
+    } else if (tier === 'PRO') {
+      currentOverrides.GROWTH = { ...updatedPlan, key: 'GROWTH' };
+    }
+
+    await (prisma as any).setting.upsert({
+      where: { key: 'XONIT_SUBSCRIPTION_PLANS' },
+      update: { value: JSON.stringify(currentOverrides) },
+      create: { key: 'XONIT_SUBSCRIPTION_PLANS', value: JSON.stringify(currentOverrides) },
+    });
+
+    logger.info(`Super Admin updated ${tier} plan pricing to Rs. ${monthlyLkr}/mo`);
+    return updatedPlan;
+  }
+
+  /**
+   * Generates a platform billing invoice for a tenant and logs to PostgreSQL
+   */
+  static async generateInvoice(tenantId: string, billingCycle: 'MONTHLY' | 'QUARTERLY' | 'ANNUAL' | 'SETUP' = 'MONTHLY', customAmount?: number) {
+    const tenant = await (prisma as any).tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true, subscriptionTier: true },
+    });
+    if (!tenant) throw new Error(`Tenant ${tenantId} not found`);
+
+    const setting = await (prisma as any).setting.findUnique({
+      where: { key: 'PLATFORM_INVOICE_LOGS' },
+    });
+    const invoices: any[] = setting?.value ? JSON.parse(setting.value) : [];
+
+    // Calculate invoice amount
+    let amount = customAmount;
+    if (amount === undefined || amount === null) {
+      const tier = (tenant.subscriptionTier || 'STARTER').toUpperCase();
+      const effectiveTier = tier === 'PRO' ? 'GROWTH' : tier;
+      const plan: PlanConfig = DEFAULT_PLANS[effectiveTier] || (DEFAULT_PLANS.STARTER as PlanConfig);
+      if (billingCycle === 'ANNUAL') amount = plan.annualLkr;
+      else if (billingCycle === 'QUARTERLY') amount = plan.quarterlyLkr;
+      else amount = plan.monthlyLkr;
+    }
+
+    const nextSeq = invoices.length + 1;
+    const invoiceNumber = `INV-2026-${String(nextSeq).padStart(4, '0')}`;
+    const newInvoice = {
+      id: `inv-${Date.now()}`,
+      invoiceNumber,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      amountLkr: amount,
+      billingCycle,
+      status: 'PAID',
+      issuedAt: new Date().toISOString(),
+    };
+
+    const updated = [newInvoice, ...invoices];
+    await (prisma as any).setting.upsert({
+      where: { key: 'PLATFORM_INVOICE_LOGS' },
+      update: { value: JSON.stringify(updated) },
+      create: { key: 'PLATFORM_INVOICE_LOGS', value: JSON.stringify(updated) },
+    });
+
+    logger.info(`Super Admin generated invoice ${invoiceNumber} for tenant [${tenant.name}] - Rs. ${amount}`);
+    return newInvoice;
+  }
+
+  /**
+   * Updates an invoice status (e.g. PENDING, PAID, VOID)
+   */
+  static async updateInvoiceStatus(invoiceId: string, status: 'PAID' | 'PENDING' | 'VOID') {
+    const setting = await (prisma as any).setting.findUnique({
+      where: { key: 'PLATFORM_INVOICE_LOGS' },
+    });
+    const invoices: any[] = setting?.value ? JSON.parse(setting.value) : [];
+    const index = invoices.findIndex((inv: any) => inv.id === invoiceId || inv.invoiceNumber === invoiceId);
+    if (index === -1) throw new Error(`Invoice ${invoiceId} not found`);
+
+    invoices[index].status = status;
+    invoices[index].updatedAt = new Date().toISOString();
+
+    await (prisma as any).setting.upsert({
+      where: { key: 'PLATFORM_INVOICE_LOGS' },
+      update: { value: JSON.stringify(invoices) },
+      create: { key: 'PLATFORM_INVOICE_LOGS', value: JSON.stringify(invoices) },
+    });
+
+    return invoices[index];
   }
 
   /**

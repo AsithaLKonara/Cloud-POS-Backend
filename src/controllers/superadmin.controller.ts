@@ -83,4 +83,72 @@ export class SuperAdminController {
       res.status(500).json({ success: false, message: err.message || 'Failed to fetch cluster telemetry' });
     }
   }
+
+  async getMonthlyAnalytics(req: Request, res: Response): Promise<void> {
+    try {
+      const analytics = await SuperAdminService.getMonthlyAnalytics();
+      res.status(200).json({ success: true, data: analytics });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch monthly analytics' });
+    }
+  }
+
+  async getRevenueBreakdown(req: Request, res: Response): Promise<void> {
+    try {
+      const breakdown = await SuperAdminService.getRevenueBreakdown();
+      res.status(200).json({ success: true, data: breakdown });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch revenue breakdown' });
+    }
+  }
+
+  async getTopOutlets(req: Request, res: Response): Promise<void> {
+    try {
+      const limit = parseInt(req.query.limit as string, 10) || 5;
+      const outlets = await SuperAdminService.getTopOutlets(limit);
+      res.status(200).json({ success: true, data: outlets });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch top outlets' });
+    }
+  }
+
+  async updatePlanPrice(req: Request, res: Response): Promise<void> {
+    try {
+      const tier = req.params.tier as string;
+      const monthlyLkr = parseInt(req.body.monthlyLkr, 10);
+      if (isNaN(monthlyLkr) || monthlyLkr <= 0) {
+        res.status(400).json({ success: false, message: 'Valid positive monthly price required' });
+        return;
+      }
+      const updated = await SuperAdminService.updatePlanPrice(tier, monthlyLkr);
+      res.status(200).json({ success: true, message: `Subscription tier ${tier} price updated to Rs. ${monthlyLkr}`, data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update plan pricing' });
+    }
+  }
+
+  async generateInvoice(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId, billingCycle, amountLkr } = req.body;
+      if (!tenantId) {
+        res.status(400).json({ success: false, message: 'tenantId is required' });
+        return;
+      }
+      const invoice = await SuperAdminService.generateInvoice(tenantId, billingCycle, amountLkr);
+      res.status(201).json({ success: true, message: `Invoice ${invoice.invoiceNumber} generated`, data: invoice });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to generate invoice' });
+    }
+  }
+
+  async updateInvoiceStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const invoiceId = req.params.invoiceId as string;
+      const { status } = req.body;
+      const updated = await SuperAdminService.updateInvoiceStatus(invoiceId, status);
+      res.status(200).json({ success: true, message: `Invoice status updated to ${status}`, data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update invoice status' });
+    }
+  }
 }
