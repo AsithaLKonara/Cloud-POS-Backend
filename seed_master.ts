@@ -341,6 +341,18 @@ async function seedMaster() {
       },
     });
 
+    const featuredImg = {
+      'ngk-iridium-ilkar7b11': '/products/ngk-iridium-spark-plug.jpg',
+      'vic-air-filter-a-1014': '/products/vic-air-filter-a1014.jpg',
+      'denso-oil-filter-90915-10003': '/products/denso-oil-filter-90915.jpg',
+      'toyota-sllc-pink-4l': '/products/toyota-sllc-pink-coolant.jpg',
+      'toyota-cvtf-fe': '/products/toyota-cvtf-fe-fluid.jpg',
+      'caltex-delo-400-15w-40': '/products/caltex-delo-400-15w40.jpg',
+      'shell-helix-hx7-10w-40': '/products/shell-helix-hx7-10w40.jpg',
+      'castrol-edge-5w-30': '/products/castrol-edge-5w30.jpg',
+      'mobil-1-0w-20': '/products/mobil-1-0w20.jpg',
+    }[p.slug] || null;
+
     for (const vData of p.variants) {
       const v = await prisma.productVariant.upsert({
         where: { sku: vData.sku },
@@ -352,6 +364,8 @@ async function seedMaster() {
           wholesalePrice: vData.wholesalePrice,
           unitVolumeLiters: vData.unitVolume,
           packUnit: vData.unitType,
+          featuredImage: featuredImg,
+          gallery: featuredImg ? [featuredImg] : [],
         },
         create: {
           productId: product.id,
@@ -363,6 +377,8 @@ async function seedMaster() {
           wholesalePrice: vData.wholesalePrice,
           unitVolumeLiters: vData.unitVolume,
           packUnit: vData.unitType,
+          featuredImage: featuredImg,
+          gallery: featuredImg ? [featuredImg] : [],
         },
       });
 
