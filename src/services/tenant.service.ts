@@ -368,6 +368,36 @@ export class TenantService {
   }
 
   /**
+   * Updates tenant profile, settings, regional configuration, and quotas.
+   */
+  static async updateTenant(id: string, data: any) {
+    const existing = await (prisma as any).tenant.findUnique({ where: { id } });
+    if (!existing) throw new Error(`Tenant with ID ${id} not found.`);
+
+    const updatePayload: any = {};
+    if (data.name !== undefined) updatePayload.name = String(data.name).trim();
+    if (data.slug !== undefined && data.slug) updatePayload.slug = this.slugify(data.slug);
+    if (data.businessType !== undefined) updatePayload.businessType = data.businessType;
+    if (data.currency !== undefined) updatePayload.currency = data.currency;
+    if (data.currencySymbol !== undefined) updatePayload.currencySymbol = data.currencySymbol;
+    if (data.timezone !== undefined) updatePayload.timezone = data.timezone;
+    if (data.taxRate !== undefined) updatePayload.taxRate = Number(data.taxRate) || 0.0;
+    if (data.logoUrl !== undefined) updatePayload.logoUrl = data.logoUrl;
+    if (data.subscriptionTier !== undefined) updatePayload.subscriptionTier = data.subscriptionTier;
+    if (data.maxBranches !== undefined) updatePayload.maxBranches = Number(data.maxBranches);
+    if (data.maxUsers !== undefined) updatePayload.maxUsers = Number(data.maxUsers);
+    if (data.status !== undefined) updatePayload.status = data.status;
+    if (data.settings !== undefined) {
+      updatePayload.settings = { ...((existing.settings as any) || {}), ...data.settings };
+    }
+
+    return (prisma as any).tenant.update({
+      where: { id },
+      data: updatePayload,
+    });
+  }
+
+  /**
    * Retrieves tenant resource usage against quota limits.
    */
   static async getTenantUsage(tenantId: string) {

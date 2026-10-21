@@ -152,4 +152,55 @@ export class TenantController {
       });
     }
   }
+
+  /**
+   * Updates tenant profile, settings, regional configuration, and quotas.
+   */
+  async update(req: Request, res: Response): Promise<void> {
+    try {
+      const id = (req.params.id === 'current' ? (req as any).tenantId : req.params.id) as string;
+      if (!id) {
+        res.status(400).json({ success: false, message: 'Tenant ID is required.' });
+        return;
+      }
+      const updated = await TenantService.updateTenant(id, req.body);
+      res.status(200).json({
+        success: true,
+        message: 'Tenant settings updated successfully.',
+        data: updated,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to update tenant settings.',
+      });
+    }
+  }
+
+  /**
+   * Retrieves current authenticated tenant.
+   */
+  async getCurrent(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = (req as any).tenantId;
+      if (!tenantId) {
+        res.status(400).json({ success: false, message: 'No tenant context found.' });
+        return;
+      }
+      const tenant = await TenantService.getTenantById(tenantId);
+      if (!tenant) {
+        res.status(404).json({ success: false, message: 'Tenant not found.' });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        data: tenant,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch current tenant.',
+      });
+    }
+  }
 }
