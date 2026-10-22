@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { TenantService } from '../services/tenant.service';
+import prisma from '../config/prisma';
 
 export class TenantController {
   /**
@@ -182,7 +183,14 @@ export class TenantController {
    */
   async getCurrent(req: Request, res: Response): Promise<void> {
     try {
-      const tenantId = (req as any).tenantId;
+      let tenantId = (req as any).tenantId || (req as any).user?.tenantId;
+      if (!tenantId) {
+        const first = await prisma.tenant.findFirst({
+          where: { status: 'ACTIVE' },
+          select: { id: true },
+        });
+        tenantId = first?.id;
+      }
       if (!tenantId) {
         res.status(400).json({ success: false, message: 'No tenant context found.' });
         return;

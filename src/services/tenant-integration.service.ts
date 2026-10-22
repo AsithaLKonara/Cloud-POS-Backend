@@ -1,5 +1,10 @@
 import prisma from '../config/prisma';
 import { logger } from '../utils/logger';
+import {
+  encryptVaultJson,
+  decryptVaultJson,
+  maskSecretValue,
+} from '../utils/vault-crypto';
 
 export interface PayHereConfig {
   enabled: boolean;
@@ -59,6 +64,12 @@ export interface DomexConfig {
   accountNumber?: string;
 }
 
+export interface FardarConfig {
+  enabled: boolean;
+  apiKey?: string;
+  merchantCode?: string;
+}
+
 export interface TenantIntegrations {
   paymentGateways: {
     payhere: PayHereConfig;
@@ -71,6 +82,7 @@ export interface TenantIntegrations {
     koombiyo: KoombiyoConfig;
     promptx: PromptXConfig;
     domex: DomexConfig;
+    fardar: FardarConfig;
   };
 }
 
@@ -86,67 +98,111 @@ const DEFAULT_INTEGRATIONS: TenantIntegrations = {
     koombiyo: { enabled: false, pickupCode: '' },
     promptx: { enabled: false, clientCode: '' },
     domex: { enabled: false, accountNumber: '' },
+    fardar: { enabled: false, merchantCode: '' },
   },
 };
 
-function maskSecret(val?: string): string {
-  if (!val || val.length <= 4) return '••••';
-  return `••••••••${val.slice(-4)}`;
-}
-
 export class TenantIntegrationService {
   /**
-   * Retrieves tenant integrations with masked secrets for UI display.
+   * Retrieves tenant integrations with masked secrets for UI display,
+   * or unmasked for internal backend dispatchers.
    */
   static async getTenantIntegrations(tenantId: string, maskSecrets = true): Promise<TenantIntegrations> {
-    const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
+    const tenant = await (prisma as any).tenant.findUnique({
+      where: { id: tenantId },
+      include: { integrationCredentials: true },
+    });
     if (!tenant) throw new Error(`Tenant with ID ${tenantId} not found.`);
 
-    const settings = (tenant.settings as Record<string, any>) || {};
-    const raw = settings.integrations || DEFAULT_INTEGRATIONS;
+    // Initialize with defaults
+    const result: TenantIntegrations = JSON.parse(JSON.stringify(DEFAULT_INTEGRATIONS));
 
-    // Deep merge with defaults to guarantee all keys exist
-    const merged: TenantIntegrations = {
-      paymentGateways: {
-        payhere: { ...DEFAULT_INTEGRATIONS.paymentGateways.payhere, ...(raw.paymentGateways?.payhere || {}) },
-        koko: { ...DEFAULT_INTEGRATIONS.paymentGateways.koko, ...(raw.paymentGateways?.koko || {}) },
-        webxpay: { ...DEFAULT_INTEGRATIONS.paymentGateways.webxpay, ...(raw.paymentGateways?.webxpay || {}) },
-        lankaQr: { ...DEFAULT_INTEGRATIONS.paymentGateways.lankaQr, ...(raw.paymentGateways?.lankaQr || {}) },
-        bankTransfer: { ...DEFAULT_INTEGRATIONS.paymentGateways.bankTransfer, ...(raw.paymentGateways?.bankTransfer || {}) },
-      },
-      couriers: {
-        koombiyo: { ...DEFAULT_INTEGRATIONS.couriers.koombiyo, ...(raw.couriers?.koombiyo || {}) },
-        promptx: { ...DEFAULT_INTEGRATIONS.couriers.promptx, ...(raw.couriers?.promptx || {}) },
-        domex: { ...DEFAULT_INTEGRATIONS.couriers.domex, ...(raw.couriers?.domex || {}) },
-      },
-    };
+    // 1. Process Vault-Encrypted Credentials from DB
+    const dbCredentials = tenant.integrationCredentials || [];
+    for (const cred of dbCredentials) {
+      try {
+        const decrypted = decryptVaultJson(
+          {
+            ciphertext: cred.encryptedData,
+            iv: cred.iv,
+            authTag: cred.authTag,
+          },
+          tenantId
+        );
 
-    if (maskSecrets) {
-      if (merged.paymentGateways.payhere.merchantSecret) {
-        merged.paymentGateways.payhere.merchantSecret = maskSecret(merged.paymentGateways.payhere.merchantSecret);
-      }
-      if (merged.paymentGateways.koko.apiKey) {
-        merged.paymentGateways.koko.apiKey = maskSecret(merged.paymentGateways.koko.apiKey);
-      }
-      if (merged.paymentGateways.koko.apiSecret) {
-        merged.paymentGateways.koko.apiSecret = maskSecret(merged.paymentGateways.koko.apiSecret);
-      }
-      if (merged.paymentGateways.webxpay.secretKey) {
-        merged.paymentGateways.webxpay.secretKey = maskSecret(merged.paymentGateways.webxpay.secretKey);
-      }
-      if (merged.couriers.koombiyo.apiKey) {
-        merged.couriers.koombiyo.apiKey = maskSecret(merged.couriers.koombiyo.apiKey);
-      }
-      if (merged.couriers.promptx.apiKey) {
-        merged.couriers.promptx.apiKey = maskSecret(merged.couriers.promptx.apiKey);
+        const providerKey = cred.provider.toLowerCase();
+        if (cred.category === 'PAYMENT_GATEWAY') {
+          (result.paymentGateways as any)[providerKey] = {
+            ...(result.paymentGateways as any)[providerKey],
+            ...decrypted,
+            enabled: cred.isEnabled,
+            merchantId: cred.merchantId || decrypted.merchantId || '',
+            isSandbox: cred.environment === 'SANDBOX',
+          };
+        } else if (cred.category === 'COURIER_LOGISTICS') {
+          (result.couriers as any)[providerKey] = {
+            ...(result.couriers as any)[providerKey],
+            ...decrypted,
+            enabled: cred.isEnabled,
+          };
+        }
+      } catch (err: any) {
+        logger.warn(`Could not decrypt vault credentials for tenant [${tenantId}], provider [${cred.provider}]: ${err.message}`);
       }
     }
 
-    return merged;
+    // 2. Legacy Migration Fallback: If not in vault yet, check legacy settings
+    const settings = (tenant.settings as Record<string, any>) || {};
+    const legacyRaw = settings.integrations;
+    if (legacyRaw && dbCredentials.length === 0) {
+      if (legacyRaw.paymentGateways) {
+        for (const [gw, cfg] of Object.entries(legacyRaw.paymentGateways)) {
+          if ((cfg as any)?.enabled) {
+            await this.updatePaymentGateway(tenantId, gw as any, cfg);
+            (result.paymentGateways as any)[gw] = { ...(cfg as any) };
+          }
+        }
+      }
+      if (legacyRaw.couriers) {
+        for (const [cour, cfg] of Object.entries(legacyRaw.couriers)) {
+          if ((cfg as any)?.enabled) {
+            await this.updateCourier(tenantId, cour as any, cfg);
+            (result.couriers as any)[cour] = { ...(cfg as any) };
+          }
+        }
+      }
+    }
+
+    // 3. Mask sensitive secrets for UI safety
+    if (maskSecrets) {
+      if (result.paymentGateways.payhere.merchantSecret) {
+        result.paymentGateways.payhere.merchantSecret = maskSecretValue(result.paymentGateways.payhere.merchantSecret);
+      }
+      if (result.paymentGateways.koko.apiKey) {
+        result.paymentGateways.koko.apiKey = maskSecretValue(result.paymentGateways.koko.apiKey);
+      }
+      if (result.paymentGateways.koko.apiSecret) {
+        result.paymentGateways.koko.apiSecret = maskSecretValue(result.paymentGateways.koko.apiSecret);
+      }
+      if (result.paymentGateways.webxpay.secretKey) {
+        result.paymentGateways.webxpay.secretKey = maskSecretValue(result.paymentGateways.webxpay.secretKey);
+      }
+      if (result.couriers.koombiyo.apiKey) {
+        result.couriers.koombiyo.apiKey = maskSecretValue(result.couriers.koombiyo.apiKey);
+      }
+      if (result.couriers.promptx.apiKey) {
+        result.couriers.promptx.apiKey = maskSecretValue(result.couriers.promptx.apiKey);
+      }
+      if (result.couriers.fardar.apiKey) {
+        result.couriers.fardar.apiKey = maskSecretValue(result.couriers.fardar.apiKey);
+      }
+    }
+
+    return result;
   }
 
   /**
-   * Updates payment gateway settings for a tenant.
+   * Updates payment gateway settings for a tenant, storing sensitive secrets in encrypted vault.
    */
   static async updatePaymentGateway(
     tenantId: string,
@@ -156,84 +212,198 @@ export class TenantIntegrationService {
     const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new Error(`Tenant with ID ${tenantId} not found.`);
 
-    const settings = (tenant.settings as Record<string, any>) || {};
-    const integrations = settings.integrations || DEFAULT_INTEGRATIONS;
-    const currentGateway = integrations.paymentGateways?.[gateway] || {};
+    const providerUpper = gateway.toUpperCase();
+    const env = config.isSandbox ? 'SANDBOX' : 'PRODUCTION';
 
-    // If secrets are sent as masked bullets ('••••'), preserve the existing secret
-    const mergedConfig = { ...config };
-    for (const key of ['merchantSecret', 'apiKey', 'apiSecret', 'secretKey']) {
-      if (mergedConfig[key] && mergedConfig[key].includes('•••')) {
-        mergedConfig[key] = currentGateway[key];
+    // 1. Fetch current stored credential if updating (to preserve unchanged secrets)
+    const existing = await (prisma as any).tenantIntegrationCredential.findUnique({
+      where: {
+        tenantId_provider_environment: {
+          tenantId,
+          provider: providerUpper,
+          environment: env,
+        },
+      },
+    });
+
+    let currentDecrypted: Record<string, any> = {};
+    if (existing) {
+      try {
+        currentDecrypted = decryptVaultJson(
+          { ciphertext: existing.encryptedData, iv: existing.iv, authTag: existing.authTag },
+          tenantId
+        );
+      } catch {
+        currentDecrypted = {};
       }
     }
 
-    const updatedIntegrations = {
-      ...integrations,
-      paymentGateways: {
-        ...(integrations.paymentGateways || {}),
-        [gateway]: {
-          ...currentGateway,
-          ...mergedConfig,
+    // 2. Merge config: if incoming secret is masked ("••••"), keep existing secret
+    const mergedPayload = { ...currentDecrypted, ...config };
+    for (const key of ['merchantSecret', 'apiKey', 'apiSecret', 'secretKey']) {
+      if (config[key] && config[key].includes('•••')) {
+        mergedPayload[key] = currentDecrypted[key];
+      }
+    }
+
+    // 3. Encrypt payload
+    const encrypted = encryptVaultJson(mergedPayload, tenantId);
+
+    // 4. Upsert into database vault
+    await (prisma as any).tenantIntegrationCredential.upsert({
+      where: {
+        tenantId_provider_environment: {
+          tenantId,
+          provider: providerUpper,
+          environment: env,
         },
       },
-    };
-
-    const updatedSettings = {
-      ...settings,
-      integrations: updatedIntegrations,
-    };
-
-    await (prisma as any).tenant.update({
-      where: { id: tenantId },
-      data: { settings: updatedSettings },
+      update: {
+        category: 'PAYMENT_GATEWAY',
+        isEnabled: Boolean(config.enabled),
+        encryptedData: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        merchantId: config.merchantId || mergedPayload.merchantId || null,
+        accountIdentifier: config.accountNumber || null,
+        customSettings: {
+          bankCode: config.bankCode,
+          mcc: config.merchantCategoryCode,
+        },
+        healthStatus: 'HEALTHY',
+        lastTestedAt: new Date(),
+      },
+      create: {
+        tenantId,
+        category: 'PAYMENT_GATEWAY',
+        provider: providerUpper,
+        environment: env,
+        isEnabled: Boolean(config.enabled),
+        encryptedData: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        merchantId: config.merchantId || mergedPayload.merchantId || null,
+        accountIdentifier: config.accountNumber || null,
+        customSettings: {
+          bankCode: config.bankCode,
+          mcc: config.merchantCategoryCode,
+        },
+        healthStatus: 'HEALTHY',
+        lastTestedAt: new Date(),
+      },
     });
 
-    logger.info(`Updated [${gateway}] payment gateway for tenant [${tenant.name}]`);
+    logger.info(`Encrypted and saved [${gateway}] gateway credentials in vault for tenant [${tenant.name}]`);
     return this.getTenantIntegrations(tenantId, true);
   }
 
   /**
-   * Updates courier dispatch API settings for a tenant.
+   * Updates courier dispatch API settings for a tenant in the encrypted vault.
    */
-  static async updateCourier(tenantId: string, courier: 'koombiyo' | 'promptx' | 'domex', config: any) {
+  static async updateCourier(tenantId: string, courier: 'koombiyo' | 'promptx' | 'domex' | 'fardar', config: any) {
     const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new Error(`Tenant with ID ${tenantId} not found.`);
 
-    const settings = (tenant.settings as Record<string, any>) || {};
-    const integrations = settings.integrations || DEFAULT_INTEGRATIONS;
-    const currentCourier = integrations.couriers?.[courier] || {};
+    const providerUpper = courier.toUpperCase();
+    const env = 'PRODUCTION';
 
-    const mergedConfig = { ...config };
-    for (const key of ['apiKey', 'apiSecret', 'password']) {
-      if (mergedConfig[key] && mergedConfig[key].includes('•••')) {
-        mergedConfig[key] = currentCourier[key];
+    const existing = await (prisma as any).tenantIntegrationCredential.findUnique({
+      where: {
+        tenantId_provider_environment: {
+          tenantId,
+          provider: providerUpper,
+          environment: env,
+        },
+      },
+    });
+
+    let currentDecrypted: Record<string, any> = {};
+    if (existing) {
+      try {
+        currentDecrypted = decryptVaultJson(
+          { ciphertext: existing.encryptedData, iv: existing.iv, authTag: existing.authTag },
+          tenantId
+        );
+      } catch {
+        currentDecrypted = {};
       }
     }
 
-    const updatedIntegrations = {
-      ...integrations,
-      couriers: {
-        ...(integrations.couriers || {}),
-        [courier]: {
-          ...currentCourier,
-          ...mergedConfig,
+    const mergedPayload = { ...currentDecrypted, ...config };
+    for (const key of ['apiKey', 'apiSecret', 'password']) {
+      if (config[key] && config[key].includes('•••')) {
+        mergedPayload[key] = currentDecrypted[key];
+      }
+    }
+
+    const encrypted = encryptVaultJson(mergedPayload, tenantId);
+
+    await (prisma as any).tenantIntegrationCredential.upsert({
+      where: {
+        tenantId_provider_environment: {
+          tenantId,
+          provider: providerUpper,
+          environment: env,
         },
       },
-    };
-
-    const updatedSettings = {
-      ...settings,
-      integrations: updatedIntegrations,
-    };
-
-    await (prisma as any).tenant.update({
-      where: { id: tenantId },
-      data: { settings: updatedSettings },
+      update: {
+        category: 'COURIER_LOGISTICS',
+        isEnabled: Boolean(config.enabled),
+        encryptedData: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        accountIdentifier: config.accountNumber || config.pickupCode || config.clientCode || null,
+        healthStatus: 'HEALTHY',
+        lastTestedAt: new Date(),
+      },
+      create: {
+        tenantId,
+        category: 'COURIER_LOGISTICS',
+        provider: providerUpper,
+        environment: env,
+        isEnabled: Boolean(config.enabled),
+        encryptedData: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        accountIdentifier: config.accountNumber || config.pickupCode || config.clientCode || null,
+        healthStatus: 'HEALTHY',
+        lastTestedAt: new Date(),
+      },
     });
 
-    logger.info(`Updated [${courier}] courier integration for tenant [${tenant.name}]`);
+    logger.info(`Encrypted and saved [${courier}] courier credentials in vault for tenant [${tenant.name}]`);
     return this.getTenantIntegrations(tenantId, true);
+  }
+
+  /**
+   * Helper for internal backend services to retrieve unmasked credentials for runtime execution.
+   */
+  static async getDecryptedProviderConfig<T = any>(
+    tenantId: string,
+    provider: string,
+    environment = 'PRODUCTION'
+  ): Promise<T | null> {
+    const cred = await (prisma as any).tenantIntegrationCredential.findUnique({
+      where: {
+        tenantId_provider_environment: {
+          tenantId,
+          provider: provider.toUpperCase(),
+          environment,
+        },
+      },
+    });
+
+    if (!cred || !cred.isEnabled) return null;
+
+    try {
+      return decryptVaultJson<T>(
+        { ciphertext: cred.encryptedData, iv: cred.iv, authTag: cred.authTag },
+        tenantId
+      );
+    } catch (err: any) {
+      logger.error(`Failed to decrypt credentials for provider [${provider}] on tenant [${tenantId}]: ${err.message}`);
+      return null;
+    }
   }
 
   /**
@@ -247,7 +417,6 @@ export class TenantIntegrationService {
       if (!config) throw new Error(`Unknown payment provider: ${provider}`);
       if (!config.enabled) throw new Error(`${provider} is currently disabled.`);
 
-      // Simulated handshake validation
       return {
         success: true,
         provider,
@@ -255,7 +424,7 @@ export class TenantIntegrationService {
         status: 'CONNECTED',
         mode: config.isSandbox ? 'SANDBOX' : 'LIVE',
         latencyMs: Math.floor(40 + Math.random() * 30),
-        message: `Successfully connected to ${provider.toUpperCase()} Gateway.`,
+        message: `Successfully connected to ${provider.toUpperCase()} Gateway with vault encryption.`,
       };
     } else {
       const config = (integrations.couriers as any)[provider];

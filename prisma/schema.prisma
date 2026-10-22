@@ -56,8 +56,11 @@ model Tenant {
   diningTables     DiningTable[]
   suppliers        Supplier[]
   purchaseOrders   PurchaseOrder[]
-  inventoryBatches InventoryBatch[]
-  stockTransfers   StockTransfer[]
+  inventoryBatches       InventoryBatch[]
+  stockTransfers         StockTransfer[]
+  integrationCredentials TenantIntegrationCredential[]
+  apiKeys                TenantApiKey[]
+  webhookEndpoints       TenantWebhookEndpoint[]
 
   @@index([slug])
   @@index([status])
@@ -1021,4 +1024,109 @@ model BranchExpense {
 
   @@index([tenantId])
   @@index([branchId, date])
+}
+
+// ============================================================================
+// HEADLESS API & DEVELOPER PLATFORM
+// ============================================================================
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum IntegrationCategory {
+  PAYMENT_GATEWAY
+  COURIER_LOGISTICS
+  SMS_GATEWAY
+  ACCOUNTING_ERP
+}
+
+model TenantIntegrationCredential {
+  id                String              @id @default(uuid())
+  tenantId          String
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category          IntegrationCategory
+  provider          String              // "PAYHERE", "KOKO", "WEBXPAY", "STRIPE", "LANKAQR", "KOOMBIYO", "PROMPTX", "FARDAR", "NOTIFYLK"
+  environment       String              @default("SANDBOX") // "SANDBOX" | "PRODUCTION"
+  isEnabled         Boolean             @default(false)
+  
+  // Encrypted Payload (AES-256-GCM)
+  encryptedData     String              // Base64 ciphertext of JSON credentials
+  iv                String              // Base64 12-byte initialization vector
+  authTag           String              // Base64 16-byte authentication tag
+  keyVersion        Int                 @default(1)
+  
+  // Public Metadata (Unencrypted for fast UI filtering)
+  merchantId        String?             // e.g. PayHere Merchant ID, PickMe Client Code
+  accountIdentifier String?             // e.g. Bank Account Number or Courier Account
+  customSettings    Json?               // Non-secret metadata
+  
+  lastTestedAt      DateTime?
+  healthStatus      String              @default("UNTESTED") // "HEALTHY", "FAILED", "UNTESTED"
+  lastError         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([tenantId, provider, environment])
+  @@index([tenantId])
+  @@index([category])
+}
+
+model TenantApiKey {
+  id              String        @id @default(uuid())
+  tenantId        String
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String        // e.g. "Shopify Storefront Web", "Mobile App Production"
+  clientId        String        @unique // Public identifier: "xcl_live_..."
+  hashedSecret    String        // Argon2/SHA-256 hash of secret key
+  secretPrefix    String        // First 8 chars for identification: "xak_live_..."
+  scopes          String[]      // ["catalog:read", "orders:create", "customers:sync"]
+  status          ApiKeyStatus  @default(ACTIVE)
+  rateLimitPerMin Int           @default(120)
+  allowedOrigins  String[]      // CORS whitelist: ["https://mystore.lk"]
+  allowedIps      String[]      // IP whitelist (optional for backend server-to-server)
+  lastUsedAt      DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([tenantId])
+  @@index([clientId])
+  @@index([status])
+}
+
+model TenantWebhookEndpoint {
+  id               String               @id @default(uuid())
+  tenantId         String
+  tenant           Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  targetUrl        String               // "https://mystore.lk/api/webhooks/xonit"
+  secretKey        String               // Secret for HMAC-SHA256 signature verification
+  subscribedEvents String[]             // ["order.created", "order.fulfilled", "inventory.low_stock"]
+  isActive         Boolean              @default(true)
+  failureCount     Int                  @default(0)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  deliveries       WebhookDeliveryLog[]
+
+  @@index([tenantId])
+  @@index([isActive])
+}
+
+model WebhookDeliveryLog {
+  id           String                @id @default(uuid())
+  endpointId   String
+  endpoint     TenantWebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event        String                // "order.fulfilled"
+  payload      Json
+  responseCode Int?
+  responseBody String?
+  attempt      Int                   @default(1)
+  status       String                // "SUCCESS", "FAILED", "RETRYING"
+  createdAt    DateTime              @default(now())
+
+  @@index([endpointId])
+  @@index([status])
 }

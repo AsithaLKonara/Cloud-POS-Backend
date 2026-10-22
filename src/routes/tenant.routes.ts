@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { TenantController } from '../controllers/tenant.controller';
+import { authenticateJWT } from '../middlewares/auth.middleware';
 
 const router = Router();
 const tenantController = new TenantController();
@@ -7,12 +8,12 @@ const tenantController = new TenantController();
 // Provisioning & Health
 router.post('/provision', (req, res) => tenantController.provision(req, res));
 router.post('/', (req, res) => tenantController.provision(req, res));
-router.get('/overview', (req, res) => tenantController.getPlatformOverview(req, res));
+router.get('/overview', authenticateJWT, (req, res) => tenantController.getPlatformOverview(req, res));
 
-// Querying & Management
-router.get('/current', (req, res) => tenantController.getCurrent(req, res));
-router.put('/current', (req, res) => tenantController.update(req, res));
-router.patch('/current', (req, res) => tenantController.update(req, res));
+// Querying & Management (authenticated)
+router.get('/current', authenticateJWT, (req, res) => tenantController.getCurrent(req, res));
+router.put('/current', authenticateJWT, (req, res) => tenantController.update(req, res));
+router.patch('/current', authenticateJWT, (req, res) => tenantController.update(req, res));
 
 router.get('/', (req, res) => tenantController.getAll(req, res));
 router.get('/:id', (req, res) => tenantController.getById(req, res));
