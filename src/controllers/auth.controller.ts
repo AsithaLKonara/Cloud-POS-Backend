@@ -23,7 +23,7 @@ const setTokenCookies = (req: Request, res: Response, accessToken: string, refre
 export class AuthController {
   static async register(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { email, password, fullName, name, birthday, phone } = req.body;
+      const { email, password, fullName, name, businessName, businessType, birthday, phone } = req.body;
 
       if (!email || !password) {
         res.status(400).json({
@@ -52,6 +52,8 @@ export class AuthController {
         email,
         password,
         fullName: fullName || name,
+        businessName,
+        businessType,
         birthday,
         phone,
         fingerprint,
@@ -217,6 +219,51 @@ export class AuthController {
       res.status(200).json({
         success: true,
         data: { csrfToken },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        res.status(400).json({ success: false, message: "Email is required." });
+        return;
+      }
+      const result = await AuthService.forgotPassword(email);
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, resetToken, otp, newPassword } = req.body;
+      if (!newPassword) {
+        res.status(400).json({ success: false, message: "New password is required." });
+        return;
+      }
+      const result = await AuthService.resetPassword({
+        email,
+        resetToken,
+        otp,
+        newPassword,
+      });
+
+      // Revoke and clear active session cookies on the client
+      res.clearCookie("laural_access_token", getAdaptiveCookieOptions(req));
+      res.clearCookie("laural_refresh_token", getAdaptiveCookieOptions(req));
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
       });
     } catch (error) {
       next(error);

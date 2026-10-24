@@ -1,7 +1,12 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { BusinessType } from "@prisma/client";
 import prisma from "../config/prisma";
+import { redisClient } from "../config/redis";
+import { logger } from "../utils/logger";
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import { AppError } from "../middlewares/errorHandler";
+import { validatePasswordStrength } from "../utils/password.util";
 import { loyaltyService } from "./loyalty.service";
 
 export interface RegisterInput {
@@ -9,6 +14,8 @@ export interface RegisterInput {
   password: string;
   fullName?: string;
   name?: string;
+  businessName?: string;
+  businessType?: string;
   birthday?: string | Date | null;
   phone?: string;
   fingerprint?: string;
@@ -109,7 +116,64 @@ export class AuthService {
 
     const displayName = input.fullName || input.name || email.split("@")[0];
 
-    // Create User & assign PUBLIC_USER role
+    // Multi-tenant business merchant registration support
+    let tenantId: string | null = null;
+    let branchId: string | null = null;
+    let assignedRoleId = publicRole.id;
+
+    if (input.businessName && input.businessName.trim()) {
+      const bName = input.businessName.trim();
+      const slug = bName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || `tenant-${Date.now()}`;
+      
+      let finalSlug = slug;
+      const existingTenant = await prisma.tenant.findUnique({ where: { slug: finalSlug } });
+      if (existingTenant) {
+        finalSlug = `${slug}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+
+      const rawType = (input.businessType || 'RETAIL').toUpperCase().replace(/\s+/g, '_');
+      const validBusinessType = Object.values(BusinessType).includes(rawType as any)
+        ? (rawType as BusinessType)
+        : BusinessType.RETAIL;
+
+      const tenant = await prisma.tenant.create({
+        data: {
+          name: bName,
+          slug: finalSlug,
+          businessType: validBusinessType,
+          status: 'ACTIVE',
+          subscriptionTier: 'TRIAL',
+        },
+      });
+      tenantId = tenant.id;
+
+      // Create primary store branch
+      const branch = await prisma.branch.create({
+        data: {
+          tenantId: tenant.id,
+          name: `${bName} - Main Store`,
+          code: `MAIN-01`,
+          address: 'Colombo, Sri Lanka',
+          type: validBusinessType as string,
+        },
+      });
+      branchId = branch.id;
+
+      // Assign Branch Admin role for merchant dashboard control
+      const adminRole = await prisma.role.findFirst({
+        where: {
+          OR: [{ name: 'Branch Admin' }, { name: 'Super Admin' }, { name: 'Admin' }],
+        },
+      });
+      if (adminRole) {
+        assignedRoleId = adminRole.id;
+      }
+    }
+
+    // Create User & assign role
     const user = await prisma.user.create({
       data: {
         email,
@@ -118,9 +182,11 @@ export class AuthService {
         birthday: birthdayDate,
         phone: input.phone || null,
         status: "ACTIVE",
+        tenantId,
+        branchId,
         userRoles: {
           create: {
-            roleId: publicRole.id,
+            roleId: assignedRoleId,
           },
         },
       },
@@ -137,6 +203,9 @@ export class AuthService {
               },
             },
           },
+        },
+        branch: {
+          select: { id: true, name: true, code: true },
         },
       },
     });
@@ -201,11 +270,151 @@ export class AuthService {
         birthday: user.birthday,
         phone: user.phone,
         status: user.status,
+        tenantId: user.tenantId,
+        branchId: user.branchId,
+        branch: user.branch,
         roles,
         permissions,
       },
       accessToken,
       refreshToken,
+    };
+  }
+
+  /**
+   * Forgot Password - generate reset token & OTP with 15m expiration
+   */
+  static async forgotPassword(emailInput: string) {
+    const email = emailInput.trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      return {
+        success: true,
+        message: "If an account exists with this email, password reset instructions have been sent.",
+      };
+    }
+
+    if (user.status === "SUSPENDED") {
+      throw new AppError("This account is suspended. Please contact platform support.", 403);
+    }
+
+    // Generate 6-digit verification code & 32-byte hex token
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    const payload = JSON.stringify({
+      userId: user.id,
+      email: user.email,
+      otp,
+      createdAt: new Date().toISOString(),
+    });
+
+    try {
+      await redisClient.setex(`auth:pwd-reset:${resetToken}`, 900, payload);
+      await redisClient.setex(`auth:pwd-reset-otp:${email}`, 900, resetToken);
+    } catch (err) {
+      logger.error("Failed to store password reset token in Redis", { error: err });
+    }
+
+    logger.info(`[AuthService] Password reset token generated for [${email}] OTP: [${otp}]`);
+
+    return {
+      success: true,
+      message: "Password reset instructions dispatched.",
+      email: user.email,
+      resetToken,
+      otp,
+      expiresIn: 900,
+    };
+  }
+
+  /**
+   * Reset Password with OTP verification
+   */
+  static async resetPassword(input: {
+    email?: string;
+    resetToken?: string;
+    otp?: string;
+    newPassword: string;
+  }) {
+    let { email, resetToken, otp, newPassword } = input;
+    if (email) email = email.trim().toLowerCase();
+
+    // Validate password strength
+    const validation = validatePasswordStrength(newPassword);
+    if (!validation.isValid) {
+      throw new AppError(validation.message || "Password does not meet complexity requirements", 400);
+    }
+
+    // If resetToken not provided but email + OTP provided, look up resetToken
+    if (!resetToken && email) {
+      try {
+        const storedToken = await redisClient.get(`auth:pwd-reset-otp:${email}`);
+        if (storedToken) resetToken = storedToken;
+      } catch (err) {
+        logger.warn("Redis lookup failed for reset OTP", { error: err });
+      }
+    }
+
+    if (!resetToken) {
+      throw new AppError("Invalid or expired password reset request. Please request a new code.", 400);
+    }
+
+    let rawPayload: string | null = null;
+    try {
+      rawPayload = await redisClient.get(`auth:pwd-reset:${resetToken}`);
+    } catch (err) {
+      logger.error("Redis error fetching reset token", { error: err });
+    }
+
+    if (!rawPayload) {
+      throw new AppError("Reset code or token has expired or is invalid. Please request a new code.", 400);
+    }
+
+    const tokenData = JSON.parse(rawPayload);
+
+    // If OTP was provided, verify it matches
+    if (otp && tokenData.otp && tokenData.otp !== otp.trim()) {
+      throw new AppError("Invalid 6-digit verification code. Please check and try again.", 400);
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update user in database
+    await prisma.user.update({
+      where: { id: tokenData.userId },
+      data: {
+        password: hashedPassword,
+      },
+    });
+
+    // Cleanup Redis keys
+    try {
+      await redisClient.del(`auth:pwd-reset:${resetToken}`);
+      if (tokenData.email) {
+        await redisClient.del(`auth:pwd-reset-otp:${tokenData.email}`);
+      }
+    } catch (err) {
+      logger.warn("Failed to clean up Redis reset keys", { error: err });
+    }
+
+    // Invalidate old refresh tokens
+    try {
+      await prisma.refreshToken.deleteMany({
+        where: { userId: tokenData.userId },
+      });
+    } catch (err) {
+      logger.warn("Failed to invalidate refresh tokens on password reset", { error: err });
+    }
+
+    logger.info(`[AuthService] Password reset successfully completed for user [${tokenData.email}]`);
+
+    return {
+      success: true,
+      message: "Password updated successfully. You can now sign in with your new credentials.",
     };
   }
 

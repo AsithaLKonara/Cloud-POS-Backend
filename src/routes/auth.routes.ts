@@ -10,6 +10,8 @@ const router = Router();
 
 router.post("/register", checkHoneypot, verifyTurnstile, registerRateLimiter, AuthController.register);
 router.post("/login", checkHoneypot, verifyTurnstile, loginRateLimiter, checkLoginLockout, AuthController.login);
+router.post("/forgot-password", checkHoneypot, loginRateLimiter, AuthController.forgotPassword);
+router.post("/reset-password", checkHoneypot, loginRateLimiter, AuthController.resetPassword);
 router.post("/refresh", AuthController.refresh);
 router.post("/logout", AuthController.logout);
 router.get("/me", authenticateJWT, AuthController.getMe);
