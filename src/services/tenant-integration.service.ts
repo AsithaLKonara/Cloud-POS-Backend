@@ -6,6 +6,14 @@ import {
   maskSecretValue,
 } from '../utils/vault-crypto';
 
+export interface OnePayConfig {
+  enabled: boolean;
+  appId: string;
+  appToken?: string;
+  hashSalt?: string;
+  isSandbox: boolean;
+}
+
 export interface PayHereConfig {
   enabled: boolean;
   merchantId: string;
@@ -68,10 +76,14 @@ export interface FardarConfig {
   enabled: boolean;
   apiKey?: string;
   merchantCode?: string;
+  pickupBranch?: string;
+  serviceType?: string;
+  isSandbox?: boolean;
 }
 
 export interface TenantIntegrations {
   paymentGateways: {
+    onepay: OnePayConfig;
     payhere: PayHereConfig;
     koko: KokoConfig;
     webxpay: WebXPayConfig;
@@ -79,15 +91,16 @@ export interface TenantIntegrations {
     bankTransfer: BankTransferConfig;
   };
   couriers: {
+    fardar: FardarConfig;
     koombiyo: KoombiyoConfig;
     promptx: PromptXConfig;
     domex: DomexConfig;
-    fardar: FardarConfig;
   };
 }
 
 const DEFAULT_INTEGRATIONS: TenantIntegrations = {
   paymentGateways: {
+    onepay: { enabled: false, appId: '', isSandbox: true },
     payhere: { enabled: false, merchantId: '', isSandbox: true },
     koko: { enabled: false, merchantId: '', isSandbox: true },
     webxpay: { enabled: false, isSandbox: true },
@@ -95,10 +108,10 @@ const DEFAULT_INTEGRATIONS: TenantIntegrations = {
     bankTransfer: { enabled: false, bankName: '', accountNumber: '', accountName: '' },
   },
   couriers: {
+    fardar: { enabled: false, merchantCode: '', pickupBranch: '', isSandbox: true },
     koombiyo: { enabled: false, pickupCode: '' },
     promptx: { enabled: false, clientCode: '' },
     domex: { enabled: false, accountNumber: '' },
-    fardar: { enabled: false, merchantCode: '' },
   },
 };
 
@@ -175,6 +188,12 @@ export class TenantIntegrationService {
 
     // 3. Mask sensitive secrets for UI safety
     if (maskSecrets) {
+      if (result.paymentGateways.onepay?.appToken) {
+        result.paymentGateways.onepay.appToken = maskSecretValue(result.paymentGateways.onepay.appToken);
+      }
+      if (result.paymentGateways.onepay?.hashSalt) {
+        result.paymentGateways.onepay.hashSalt = maskSecretValue(result.paymentGateways.onepay.hashSalt);
+      }
       if (result.paymentGateways.payhere.merchantSecret) {
         result.paymentGateways.payhere.merchantSecret = maskSecretValue(result.paymentGateways.payhere.merchantSecret);
       }
@@ -206,7 +225,7 @@ export class TenantIntegrationService {
    */
   static async updatePaymentGateway(
     tenantId: string,
-    gateway: 'payhere' | 'koko' | 'webxpay' | 'lankaQr' | 'bankTransfer',
+    gateway: 'onepay' | 'payhere' | 'koko' | 'webxpay' | 'lankaQr' | 'bankTransfer' | string,
     config: any
   ) {
     const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
@@ -240,7 +259,7 @@ export class TenantIntegrationService {
 
     // 2. Merge config: if incoming secret is masked ("••••"), keep existing secret
     const mergedPayload = { ...currentDecrypted, ...config };
-    for (const key of ['merchantSecret', 'apiKey', 'apiSecret', 'secretKey']) {
+    for (const key of ['merchantSecret', 'apiKey', 'apiSecret', 'secretKey', 'appToken', 'hashSalt']) {
       if (config[key] && config[key].includes('•••')) {
         mergedPayload[key] = currentDecrypted[key];
       }

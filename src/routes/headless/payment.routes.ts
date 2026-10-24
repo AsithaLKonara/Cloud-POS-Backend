@@ -12,5 +12,6 @@ router.post('/initiate', authenticateApiKey, requireScope('payments:process'), (
 
 // Payment Gateway notification callbacks (unauthenticated because gateways call directly with signatures)
 router.post('/notify/payhere/:tenantId', (req, res) => controller.handlePayHereNotification(req, res));
+router.post('/notify/onepay/:tenantId', (req, res) => controller.handleOnePayNotification(req, res));
 
 export default router;
