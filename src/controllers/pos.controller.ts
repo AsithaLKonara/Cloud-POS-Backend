@@ -198,7 +198,8 @@ export const processPosOrder = async (req: Request, res: Response) => {
         where: { variantId_branchId: { variantId: item.variantId, branchId } }
       });
       if (!inventory || inventory.quantity < item.qty) {
-        return res.status(400).json({ error: `Insufficient stock for variant ${item.variantId}. Available: ${inventory?.quantity || 0}, Requested: ${item.qty}` });
+        const itemLabel = variant ? `${variant.product?.name || 'Item'} - ${variant.name || variant.sku}` : `variant ${item.variantId}`;
+        return res.status(400).json({ error: `Insufficient stock for "${itemLabel}". Available at this branch: ${inventory?.quantity || 0}, Requested: ${item.qty}` });
       }
     }
 
