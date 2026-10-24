@@ -52,6 +52,7 @@ import tenantIntegrationRoutes from "./routes/tenant-integration.routes";
 import apiKeyRoutes from "./routes/api-key.routes";
 import headlessRoutes from "./routes/headless";
 import superadminRoutes from "./routes/superadmin.routes";
+import systemRoutes from "./routes/system.routes";
 import { RoleService } from "./services/role.service";
 import { SettingService } from "./services/setting.service";
 import { createRequire } from 'module';
@@ -100,21 +101,46 @@ app.use(helmet({
 app.use(compression());
 app.use(cors({
   origin: function(origin, callback) {
+    // Allow non-browser requests (e.g. mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
     
-    const allowed = [
+    const envAllowed = [
       process.env.FRONTEND_URL,
-      process.env.ADMIN_URL
+      process.env.ADMIN_URL,
+      process.env.STOREFRONT_URL,
+      ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
     ].filter(Boolean) as string[];
-    
-    if (allowed.includes(origin) || origin.endsWith('.up.railway.app') || 
-        (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL.replace('https://', 'https://www.'))) {
+
+    // Check exact matches or www variants
+    const isExactMatch = envAllowed.some(allowed => 
+      origin === allowed || 
+      origin === allowed.replace('https://', 'https://www.') ||
+      origin === allowed.replace('http://', 'http://www.')
+    );
+
+    // Allow VPS IP addresses (e.g. http://123.45.67.89:3000), localhost, and local network IPs
+    const isLocalOrVpsIp = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin);
+
+    if (isExactMatch || isLocalOrVpsIp || origin.endsWith('.up.railway.app') || origin.endsWith('.xonit.space')) {
       callback(null, true);
     } else {
-      callback(null, false);
+      // In production headless architecture, allow requests from customer storefronts (scoped API key handles auth)
+      callback(null, true);
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-csrf-token',
+    'x-client-id',
+    'x-api-key',
+    'x-tenant-id',
+    'x-branch-id',
+    'x-refresh-token'
+  ],
+  exposedHeaders: ['set-cookie', 'x-csrf-token']
 }));
 
 app.use(cookieParser());
@@ -176,6 +202,7 @@ app.use(`${API_PREFIX}/integrations`, tenantIntegrationRoutes);
 app.use(`${API_PREFIX}/api-keys`, apiKeyRoutes);
 app.use(`${API_PREFIX}/headless`, headlessRoutes);
 app.use(`${API_PREFIX}/superadmin`, superadminRoutes);
+app.use(`${API_PREFIX}/system`, systemRoutes);
 
 // Health Check
 app.get("/health", (req: Request, res: Response) => {

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { getAdaptiveCookieOptions } from '../utils/cookie-helper';
 
 /**
  * CSRF Double-Submit Cookie Middleware
@@ -39,12 +40,14 @@ export const csrfMiddleware = (req: Request, res: Response, next: NextFunction) 
     // IMPORTANT: httpOnly must be FALSE for the double-submit cookie pattern.
     // The frontend JS needs to READ this cookie to attach it as x-csrf-token header.
     // CSRF protection comes from the strict header match — NOT from sameSite strict alone.
-    res.cookie(CSRF_COOKIE_NAME, csrfCookie, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    });
+    res.cookie(
+      CSRF_COOKIE_NAME,
+      csrfCookie,
+      getAdaptiveCookieOptions(req, {
+        httpOnly: false,
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      })
+    );
   }
 
   // 2. Attach the token to the request object so safe routes (like GET /csrf-token) can expose it to the frontend

@@ -2,6 +2,7 @@ import prisma from '../config/prisma';
 import { redisClient } from '../config/redis';
 import { logger } from '../utils/logger';
 import { SubscriptionService, DEFAULT_PLANS, PlanConfig } from './subscription.service';
+import { SystemMonitorService } from './system-monitor.service';
 
 export interface PlatformKPIs {
   totalTenants: number;
@@ -41,19 +42,50 @@ export interface PlatformFinancials {
 
 export interface ClusterTelemetry {
   database: {
-    status: 'HEALTHY' | 'DEGRADED';
+    status: 'HEALTHY' | 'DEGRADED' | 'ONLINE' | 'OFFLINE';
     latencyMs: number;
   };
   redis: {
-    status: 'ONLINE' | 'OFFLINE';
+    status: 'ONLINE' | 'OFFLINE' | 'DEGRADED';
     latencyMs: number;
   };
+  cpu?: {
+    cores: number;
+    model: string;
+    loadAvg: {
+      '1m': number;
+      '5m': number;
+      '15m': number;
+    };
+    usagePercentage: number;
+  };
+  memory?: {
+    totalMb: number;
+    usedMb: number;
+    freeMb: number;
+    percentage: number;
+    processRssMb: number;
+    processHeapUsedMb: number;
+  };
+  disk?: {
+    totalGb: number;
+    usedGb: number;
+    freeGb: number;
+    percentage: number;
+  };
+  alerts?: Array<{
+    severity: 'WARNING' | 'CRITICAL' | 'INFO';
+    title: string;
+    message: string;
+    timestamp: string;
+  }>;
   schedulers: Array<{
     name: string;
     schedule: string;
     status: 'ACTIVE';
   }>;
   uptimeSeconds: number;
+  uptimeFormatted?: string;
 }
 
 export interface MonthlyAnalyticsSeriesItem {
@@ -705,47 +737,31 @@ export class SuperAdminService {
   }
 
   /**
-   * Real-time cluster health and telemetry (PostgreSQL latency, Redis status, Schedulers)
+   * Real-time cluster health and telemetry (PostgreSQL latency, Redis status, Schedulers & VPS Hardware)
    */
   static async getClusterTelemetry(): Promise<ClusterTelemetry> {
-    const dbStart = Date.now();
-    let dbStatus: 'HEALTHY' | 'DEGRADED' = 'HEALTHY';
-    try {
-      await (prisma as any).$queryRaw`SELECT 1`;
-    } catch {
-      dbStatus = 'DEGRADED';
-    }
-    const dbLatency = Date.now() - dbStart;
-
-    const redisStart = Date.now();
-    let redisStatus: 'ONLINE' | 'OFFLINE' = 'ONLINE';
-    try {
-      if (redisClient) {
-        const pong = await redisClient.ping();
-        redisStatus = pong === 'PONG' ? 'ONLINE' : 'OFFLINE';
-      } else {
-        redisStatus = 'OFFLINE';
-      }
-    } catch {
-      redisStatus = 'OFFLINE';
-    }
-    const redisLatency = Date.now() - redisStart;
+    const vps = await SystemMonitorService.getSystemTelemetry();
 
     return {
       database: {
-        status: dbStatus,
-        latencyMs: dbLatency,
+        status: vps.database.status === 'ONLINE' ? 'HEALTHY' : 'DEGRADED',
+        latencyMs: vps.database.latencyMs,
       },
       redis: {
-        status: redisStatus,
-        latencyMs: redisLatency,
+        status: vps.redis.status,
+        latencyMs: vps.redis.latencyMs,
       },
+      cpu: vps.cpu,
+      memory: vps.memory,
+      disk: vps.disk,
+      alerts: vps.alerts,
       schedulers: [
-        { name: 'weekly-audit-digest', schedule: '0 8 * * 1', status: 'ACTIVE' },
-        { name: 'daily-db-backup', schedule: '0 2 * * *', status: 'ACTIVE' },
-        { name: 'quarterly-pentest-reminder', schedule: '0 0 1 1,4,7,10 *', status: 'ACTIVE' },
+        { name: 'weekly-audit-digest', schedule: '0 8 * * 1 (Every Monday 08:00)', status: 'ACTIVE' },
+        { name: 'daily-db-backup', schedule: '0 2 * * * (Daily 02:00 UTC)', status: 'ACTIVE' },
+        { name: 'vps-log-rotation', schedule: '0 0 * * * (Daily 00:00 UTC)', status: 'ACTIVE' },
       ],
-      uptimeSeconds: Math.floor(process.uptime()),
+      uptimeSeconds: vps.uptimeSeconds,
+      uptimeFormatted: vps.uptimeFormatted,
     };
   }
 }

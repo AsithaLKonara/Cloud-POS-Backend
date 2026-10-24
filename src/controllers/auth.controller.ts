@@ -6,23 +6,18 @@ import { trackFailedLogin } from "../middlewares/loginAttempt.middleware";
 import { redisClient } from "../config/redis";
 import { logger } from "../utils/logger";
 import { generateFingerprint } from "../utils/jwt";
+import { getAdaptiveCookieOptions } from "../utils/cookie-helper";
 
-const setTokenCookies = (res: Response, accessToken: string, refreshToken: string) => {
-  const isProd = process.env.NODE_ENV === "production";
-  
-  res.cookie("laural_access_token", accessToken, {
+const setTokenCookies = (req: Request, res: Response, accessToken: string, refreshToken: string) => {
+  res.cookie("laural_access_token", accessToken, getAdaptiveCookieOptions(req, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
     maxAge: 60 * 60 * 1000, // 1 hour
-  });
+  }));
 
-  res.cookie("laural_refresh_token", refreshToken, {
+  res.cookie("laural_refresh_token", refreshToken, getAdaptiveCookieOptions(req, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+  }));
 };
 
 export class AuthController {
@@ -62,7 +57,7 @@ export class AuthController {
         fingerprint,
       });
 
-      setTokenCookies(res, result.accessToken, result.refreshToken);
+      setTokenCookies(req, res, result.accessToken, result.refreshToken);
 
       res.status(201).json({
         success: true,
@@ -104,7 +99,7 @@ export class AuthController {
       }
       logger.info('Successful login', { email, ip });
 
-      setTokenCookies(res, result.accessToken, result.refreshToken);
+      setTokenCookies(req, res, result.accessToken, result.refreshToken);
 
       res.status(200).json({
         success: true,
@@ -143,7 +138,7 @@ export class AuthController {
 
       const result = await AuthService.refreshAccessToken(refreshToken as string, fingerprint);
 
-      setTokenCookies(res, result.accessToken, refreshToken as string);
+      setTokenCookies(req, res, result.accessToken, refreshToken as string);
 
       res.status(200).json({
         success: true,
@@ -168,13 +163,10 @@ export class AuthController {
         }
       }
 
-      const isProd = process.env.NODE_ENV === "production";
-      const cookieOptions = {
+      const cookieOptions = getAdaptiveCookieOptions(req, {
         httpOnly: true,
-        secure: isProd,
-        sameSite: isProd ? "none" as const : "lax" as const,
         path: "/",
-      };
+      });
 
       res.clearCookie("laural_access_token", cookieOptions);
       res.clearCookie("laural_refresh_token", cookieOptions);

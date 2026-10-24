@@ -928,6 +928,26 @@ model AuditLog {
   @@index([tenantId])
 }
 
+model SystemErrorLog {
+  id            String   @id @default(uuid())
+  statusCode    Int      @default(500)
+  message       String
+  humanReadable String?
+  stack         String?  @db.Text
+  path          String
+  method        String
+  ip            String?
+  userAgent     String?
+  tenantId      String?
+  userId        String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([statusCode])
+  @@index([tenantId])
+}
+
 model PushSubscription {
   id        String   @id @default(uuid())
   endpoint  String   @unique
