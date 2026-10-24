@@ -7,8 +7,8 @@ export interface AuthRequest extends Request {
 }
 
 function runWithContext(user: JWTPayload | undefined, next: NextFunction) {
-  const isPlatformAdmin = user?.roles?.some(r => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN'].includes(r)) || false;
-  const isTenantAdmin = user?.roles?.some(r => ['ADMIN', 'SUPER_ADMIN'].includes(r)) || false;
+  const isPlatformAdmin = user?.roles?.some(r => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN', 'SUPER_ADMIN', 'Super Admin'].includes(r)) || false;
+  const isTenantAdmin = user?.roles?.some(r => ['ADMIN', 'SUPER_ADMIN', 'Super Admin', 'Admin'].includes(r)) || false;
 
   const currentStore = requestContext.getStore();
   const tenantId = user?.tenantId || currentStore?.tenantId || null;

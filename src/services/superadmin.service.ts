@@ -253,10 +253,11 @@ export class SuperAdminService {
 
     const totalExpenses = expenses.reduce((sum, item) => sum + item.amountLkr, 0);
 
-    // Platform Inflow = MRR + 0.5% Payment Processing Margin from GMV
+    // Canonical Platform Inflow from centralized Breakdown
+    const breakdown = await this.getRevenueBreakdown();
     const subRevenue = kpis.mrrLkr;
     const gatewayMargin = Number((kpis.platformGmvLkr * 0.005).toFixed(2));
-    const totalInflow = subRevenue + gatewayMargin;
+    const totalInflow = breakdown.totalInflowLkr;
     const netProfit = totalInflow - totalExpenses;
     const marginPercent = totalInflow > 0 ? Number(((netProfit / totalInflow) * 100).toFixed(1)) : 0;
 
@@ -598,11 +599,13 @@ export class SuperAdminService {
     const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new Error(`Tenant ${tenantId} not found`);
 
-    const currentTrialEnds = tenant.settings?.subscription?.trialEndsAt
+    const now = new Date();
+    const existingTrialDate = tenant.settings?.subscription?.trialEndsAt
       ? new Date(tenant.settings.subscription.trialEndsAt)
-      : new Date();
+      : null;
 
-    const newDate = new Date(currentTrialEnds.getTime() + extraDays * 24 * 60 * 60 * 1000);
+    const baseDate = existingTrialDate && existingTrialDate > now ? existingTrialDate : now;
+    const newDate = new Date(baseDate.getTime() + extraDays * 24 * 60 * 60 * 1000);
 
     const updatedSettings = {
       ...(tenant.settings || {}),
@@ -612,13 +615,18 @@ export class SuperAdminService {
       },
     };
 
-    return (prisma as any).tenant.update({
+    const updated = await (prisma as any).tenant.update({
       where: { id: tenantId },
       data: {
         status: 'TRIAL',
         settings: updatedSettings,
       },
     });
+
+    return {
+      ...updated,
+      trialEndsAt: newDate.toISOString(),
+    };
   }
 
   /**
@@ -690,7 +698,9 @@ export class SuperAdminService {
     }
 
     const nextSeq = invoices.length + 1;
-    const invoiceNumber = `INV-2026-${String(nextSeq).padStart(4, '0')}`;
+    const now = new Date();
+    const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const invoiceNumber = `INV-${yyyymm}-${String(nextSeq).padStart(4, '0')}`;
     const newInvoice = {
       id: `inv-${Date.now()}`,
       invoiceNumber,
@@ -716,7 +726,7 @@ export class SuperAdminService {
   /**
    * Updates an invoice status (e.g. PENDING, PAID, VOID)
    */
-  static async updateInvoiceStatus(invoiceId: string, status: 'PAID' | 'PENDING' | 'VOID') {
+  static async updateInvoiceStatus(invoiceId: string, status: 'PAID' | 'PENDING' | 'OVERDUE' | 'VOID' | string) {
     const setting = await (prisma as any).setting.findUnique({
       where: { key: 'PLATFORM_INVOICE_LOGS' },
     });

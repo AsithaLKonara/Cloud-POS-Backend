@@ -66,9 +66,37 @@ export class SuperAdminController {
     }
   }
 
+  async updateTenantSettings(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.params.tenantId as string;
+      const updated = await TenantService.updateTenant(tenantId, req.body);
+      res.status(200).json({ success: true, message: 'Tenant settings updated successfully', data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update tenant settings' });
+    }
+  }
+
   async provisionTurnkeyTenant(req: Request, res: Response): Promise<void> {
     try {
-      const result = await TenantService.provisionTenant(req.body);
+      const b = req.body || {};
+      const payload: any = {
+        name: b.name || b.businessName,
+        slug: b.slug,
+        businessType: b.businessType,
+        subscriptionTier: b.subscriptionTier,
+        maxBranches: b.maxBranches,
+        maxUsers: b.maxUsers,
+        currency: b.currency,
+        currencySymbol: b.currencySymbol,
+        initialBranchName: b.initialBranchName,
+        adminUser: b.adminUser || {
+          email: b.adminEmail,
+          password: b.adminPassword,
+          name: b.adminFullName || b.adminName,
+          phone: b.adminPhone,
+        },
+      };
+      const result = await TenantService.provisionTenant(payload);
       res.status(201).json({ success: true, message: 'Turnkey tenant provisioned successfully', data: result });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message || 'Tenant provisioning failed' });
