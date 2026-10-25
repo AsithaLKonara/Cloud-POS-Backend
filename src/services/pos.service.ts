@@ -23,9 +23,13 @@ export const posService = {
 
     // 4. Check if session already open
     const existing = await prisma.posSession.findFirst({
-      where: { terminalId: terminal.id, status: 'OPEN' }
+      where: { terminalId: terminal.id, status: 'OPEN' },
+      include: { branch: true, terminal: true, user: true }
     });
     if (existing) {
+      if (existing.userId === user.id) {
+        return existing;
+      }
       throw new Error('Terminal already has an open session.');
     }
 
@@ -147,15 +151,35 @@ export const posService = {
     };
   },
 
-  async getCurrentSession(terminalId: string) {
-    return await prisma.posSession.findFirst({
-      where: { terminalId, status: 'OPEN' },
+  async getCurrentSession(terminalId?: string, branchId?: string, userId?: string) {
+    const whereClause: any = { status: 'OPEN' };
+    if (terminalId) whereClause.terminalId = terminalId;
+    if (branchId) whereClause.branchId = branchId;
+    if (userId) whereClause.userId = userId;
+
+    let session = await prisma.posSession.findFirst({
+      where: whereClause,
       include: {
         branch: true,
         terminal: true,
         user: true
-      }
+      },
+      orderBy: { createdAt: 'desc' }
     });
+
+    if (!session && userId) {
+      session = await prisma.posSession.findFirst({
+        where: { userId, status: 'OPEN' },
+        include: {
+          branch: true,
+          terminal: true,
+          user: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
+
+    return session;
   },
 
   async generateVoucher(data: { branchId: string; returnedItems: any[]; value: number; orderId?: string }) {

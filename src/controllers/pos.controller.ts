@@ -31,12 +31,16 @@ export const closeSession = async (req: Request, res: Response) => {
 
 export const getCurrentSession = async (req: Request, res: Response) => {
   try {
-    const { terminalId } = req.query;
-    if (!terminalId) {
-      return res.status(400).json({ error: 'Terminal ID required.' });
-    }
-    
-    const session = await posService.getCurrentSession(String(terminalId));
+    const { terminalId, branchId } = req.query;
+    const userId = (req as any).user?.id;
+    const userBranchId = (req as any).user?.branchId;
+    const effectiveBranchId = (branchId ? String(branchId) : undefined) || userBranchId;
+
+    const session = await posService.getCurrentSession(
+      terminalId ? String(terminalId) : undefined,
+      effectiveBranchId,
+      userId
+    );
     res.json(session);
   } catch (error) {
     console.error(error);
