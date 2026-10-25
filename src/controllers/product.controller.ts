@@ -10,7 +10,7 @@ const productVariantSchema = z.object({
   barcode: z.string().optional().nullable(),
   price: z.number(),
   salePrice: z.number().optional().nullable(),
-  costPrice: z.number().optional().default(0),
+  costPrice: z.number().optional().nullable().default(0),
   wholesalePrice: z.number().optional().nullable(),
   packUnit: z.string().optional().nullable(),
   unitVolumeLiters: z.number().optional().nullable(),
@@ -155,8 +155,8 @@ export class ProductController {
         return;
       }
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const target = (error.meta?.target as string[]) || [];
-        res.status(400).json({ error: 'Validation Error', details: [{ message: `The ${target.join(', ')} you provided is already in use. Please use a unique value.` }] });
+        const target = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : (typeof error.meta?.target === 'string' ? error.meta.target : 'field (SKU, barcode, or slug)');
+        res.status(400).json({ error: 'Validation Error', details: [{ message: `The ${target} you provided is already in use. Please use a unique value.` }] });
         return;
       }
       console.error("CREATE PRODUCT ERROR", error); res.status(400).json({ error: error.message || 'Bad Request' });

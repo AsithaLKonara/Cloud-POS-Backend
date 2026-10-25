@@ -7,7 +7,12 @@ import { logger } from '../utils/logger';
 
 dotenv.config();
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 30,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
 const adapter = new PrismaPg(pool);
 const basePrisma = new PrismaClient({ 
   adapter,
@@ -111,6 +116,9 @@ const prisma = basePrisma.$extends({
                    set_config('app.is_admin', ${isAdmin.toString()}, true)
           `;
           return query(args);
+        }, {
+          timeout: 20000,
+          maxWait: 10000,
         });
       },
     },

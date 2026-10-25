@@ -176,10 +176,20 @@ export class ProductService {
     
     const variantsData = productData.variants?.create || [];
     
-    // Auto-generate missing barcodes for new variants
+    // Auto-generate missing barcodes and ensure unique SKUs for new variants
     for (const v of variantsData) {
       if (!v.barcode || typeof v.barcode !== 'string' || v.barcode.trim() === '') {
         v.barcode = await generateUniqueBarcode();
+      }
+      if (v.sku && typeof v.sku === 'string' && v.sku.trim() !== '') {
+        let baseSku = v.sku.trim();
+        let skuCandidate = baseSku;
+        let counter = 1;
+        while (await prisma.productVariant.findFirst({ where: { sku: skuCandidate } })) {
+          skuCandidate = `${baseSku}-${counter}`;
+          counter++;
+        }
+        v.sku = skuCandidate;
       }
     }
 

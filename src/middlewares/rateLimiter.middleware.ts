@@ -17,6 +17,10 @@ export const createRateLimiter = (endpointName: string, maxAttempts: number, win
       ip = xForwardedFor[0]?.trim() || ip;
     }
 
+    if (process.env.NODE_ENV !== 'production' && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) {
+      return next();
+    }
+
     const key = `ratelimit:${endpointName}:${ip}`;
 
     if (redisClient.status !== 'ready') {
