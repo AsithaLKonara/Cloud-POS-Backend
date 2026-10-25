@@ -148,6 +148,9 @@ export const pnlService = {
           quantity: true,
           priceAtPurchase: true,
           costPriceAtPurchase: true,
+          order: {
+            select: { branchId: true }
+          },
           variant: {
             select: {
               costPrice: true,
@@ -323,69 +326,86 @@ export const pnlService = {
         select: { id: true, name: true, code: true },
       });
 
-      branchComparison = await Promise.all(
-        allBranches.map(async (b) => {
-          const [bOrders, bExpenses, bReturns, bItems] = await Promise.all([
-            prisma.order.aggregate({
-              where: { branchId: b.id, paymentStatus: 'PAID', ...(hasDate ? { createdAt: dateFilter } : {}) },
-              _sum: { total: true },
-            }),
-            prisma.branchExpense.aggregate({
-              where: { branchId: b.id, ...(hasDate ? { date: dateFilter } : {}) },
-              _sum: { amount: true },
-            }),
-            prisma.returnRequest.aggregate({
-              where: { order: { branchId: b.id }, status: { in: ['APPROVED', 'COMPLETED'] }, ...(hasDate ? { createdAt: dateFilter } : {}) },
-              _sum: { refundAmount: true },
-            }),
-            prisma.orderItem.findMany({
-              where: { order: { branchId: b.id, paymentStatus: 'PAID', ...(hasDate ? { createdAt: dateFilter } : {}) } },
-              select: {
-                quantity: true,
-                costPriceAtPurchase: true,
-                variant: {
-                  select: {
-                    costPrice: true,
-                    product: {
-                      select: {
-                        trackInventory: true,
-                        productType: true,
-                      },
-                    },
-                  },
-                },
-              },
-            }),
-          ]);
+      const branchIds = allBranches.map(b => b.id);
 
-          let bCogs = 0;
-          for (const it of bItems) {
-            const isSvc = it.variant?.product?.productType === 'SERVICE' || it.variant?.product?.trackInventory === false;
-            const uCost = isSvc
-              ? (it.costPriceAtPurchase || 0)
-              : (it.costPriceAtPurchase > 0 ? it.costPriceAtPurchase : (it.variant?.costPrice || 0));
-            bCogs += uCost * it.quantity;
-          }
+      const [branchOrders, branchExpenses, branchReturns] = await Promise.all([
+        prisma.order.groupBy({
+          by: ['branchId'],
+          where: {
+            paymentStatus: 'PAID',
+            branchId: { in: branchIds },
+            ...(hasDate ? { createdAt: dateFilter } : {}),
+          },
+          _sum: { total: true },
+        }),
+        prisma.branchExpense.groupBy({
+          by: ['branchId'],
+          where: {
+            branchId: { in: branchIds },
+            ...(hasDate ? { date: dateFilter } : {}),
+          },
+          _sum: { amount: true },
+        }),
+        prisma.returnRequest.findMany({
+          where: {
+            status: { in: ['APPROVED', 'COMPLETED'] },
+            ...(hasDate ? { createdAt: dateFilter } : {}),
+          },
+          select: {
+            refundAmount: true,
+            order: { select: { branchId: true } },
+          },
+        }),
+      ]);
 
-          const rawTotal = bOrders._sum.total || 0;
-          const rawRefunds = bReturns._sum.refundAmount || 0;
-          const bRev = Number(Math.max(0, rawTotal - rawRefunds).toFixed(2));
-          const bExp = Number((bExpenses._sum.amount || 0).toFixed(2));
-          bCogs = Number(bCogs.toFixed(2));
-          const bNet = Number((bRev - bCogs - bExp).toFixed(2));
+      const orderMap = new Map<string, number>();
+      for (const o of branchOrders) {
+        if (o.branchId) orderMap.set(o.branchId, o._sum.total || 0);
+      }
 
-          return {
-            branchId: b.id,
-            branchName: b.name,
-            branchCode: b.code,
-            revenue: bRev,
-            cogs: bCogs,
-            expenses: bExp,
-            estimatedNet: bNet,
-            netProfit: bNet,
-          };
-        })
-      );
+      const expenseMap = new Map<string, number>();
+      for (const e of branchExpenses) {
+        if (e.branchId) expenseMap.set(e.branchId, e._sum.amount || 0);
+      }
+
+      const returnMap = new Map<string, number>();
+      for (const r of branchReturns) {
+        if (r.order?.branchId) {
+          returnMap.set(r.order.branchId, (returnMap.get(r.order.branchId) || 0) + (r.refundAmount || 0));
+        }
+      }
+
+      const cogsMap = new Map<string, number>();
+      for (const it of orderItems) {
+        const bId = (it as any).order?.branchId;
+        if (bId) {
+          const isSvc = it.variant?.product?.productType === 'SERVICE' || it.variant?.product?.trackInventory === false;
+          const uCost = isSvc
+            ? (it.costPriceAtPurchase || 0)
+            : (it.costPriceAtPurchase > 0 ? it.costPriceAtPurchase : (it.variant?.costPrice || 0));
+          cogsMap.set(bId, (cogsMap.get(bId) || 0) + (uCost * it.quantity));
+        }
+      }
+
+      branchComparison = allBranches.map((b) => {
+        const rawTotal = orderMap.get(b.id) || 0;
+        const rawRefunds = returnMap.get(b.id) || 0;
+        const bRev = Number(Math.max(0, rawTotal - rawRefunds).toFixed(2));
+        const bExp = Number((expenseMap.get(b.id) || 0).toFixed(2));
+        const bCogs = Number((cogsMap.get(b.id) || 0).toFixed(2));
+        const bNet = Number((bRev - bCogs - bExp).toFixed(2));
+
+        return {
+          branchId: b.id,
+          branchName: b.name,
+          branchCode: b.code,
+          revenue: bRev,
+          cogs: bCogs,
+          expenses: bExp,
+          estimatedNet: bNet,
+          netProfit: bNet,
+        };
+      });
     }
 
     return {
