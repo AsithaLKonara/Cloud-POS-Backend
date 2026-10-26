@@ -5,11 +5,27 @@
  * - 8 GB RAM
  * - 100 GB SSD
  * 
- * Manages:
- * 1. Backend REST & Headless API (Node.js/Express)
- * 2. Frontend Web App & Admin Dashboard (Next.js)
- * 3. VPS Daily Database Backup Daemon
+ * Resource Allocation:
+ * - 2 Cores + 3GB RAM: PostgreSQL 16 & Redis 7
+ * - 2 Cores + 3GB RAM: PM2 Apps (Backend Cluster + Next.js Server)
+ * - 2GB RAM + 4GB Swap: OS, Nginx, Buffers & Build Headroom
  */
+
+const fs = require('fs');
+const path = require('path');
+
+// Determine log directory (prefer /var/log/xonit, fallback to ./logs)
+let logDir = '/var/log/xonit';
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+} catch (e) {
+  logDir = path.join(__dirname, 'logs');
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+}
 
 module.exports = {
   apps: [
@@ -21,7 +37,7 @@ module.exports = {
       exec_mode: 'cluster',
       autorestart: true,
       watch: false,
-      max_memory_restart: '1500M', // Protects 8GB RAM from memory leaks
+      max_memory_restart: '1200M', // Protects 8GB RAM from memory leaks
       listen_timeout: 10000,
       kill_timeout: 5000,
       wait_ready: true,
@@ -29,8 +45,8 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 5000,
       },
-      error_file: '/var/log/xonit/backend-error.log',
-      out_file: '/var/log/xonit/backend-out.log',
+      error_file: path.join(logDir, 'backend-error.log'),
+      out_file: path.join(logDir, 'backend-out.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
     },
@@ -39,7 +55,7 @@ module.exports = {
       cwd: './Frontend',
       script: 'node_modules/next/dist/bin/next',
       args: 'start -p 3000',
-      instances: 1, // Next.js handles async concurrency natively
+      instances: 1, // Next.js handles concurrency via async event loop
       exec_mode: 'fork',
       autorestart: true,
       watch: false,
@@ -48,8 +64,8 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000,
       },
-      error_file: '/var/log/xonit/frontend-error.log',
-      out_file: '/var/log/xonit/frontend-out.log',
+      error_file: path.join(logDir, 'frontend-error.log'),
+      out_file: path.join(logDir, 'frontend-out.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
     },
