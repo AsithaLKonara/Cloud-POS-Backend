@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - SaaS-migration
 
 concurrency:
   group: production-backend-deploy
