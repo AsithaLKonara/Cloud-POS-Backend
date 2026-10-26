@@ -1,0 +1,42 @@
+name: Backend CI/CD Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: production-backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Backend to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Trigger Zero-Downtime Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER || 'ubuntu' }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            echo "🚀 Deploying Backend to XONIT Production VPS..."
+            cd /var/www/xonit-pos/Backend || cd /var/www/xonit-pos
+            if [ -f "../scripts/deploy.sh" ]; then
+              cd ..
+              chmod +x scripts/deploy.sh
+              ./scripts/deploy.sh
+            else
+              chmod +x scripts/deploy.sh
+              ./scripts/deploy.sh
+            fi
