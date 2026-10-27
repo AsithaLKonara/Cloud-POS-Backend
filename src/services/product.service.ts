@@ -39,6 +39,7 @@ export class ProductService {
     maxPrice?: number;
     status?: string;
   }) {
+    const { skip = 0, take = 50, search, category, productType, brand, viscosity, oilType, color, size, minPrice, maxPrice, status } = params;
     const tenantId = requestContext.getStore()?.tenantId || 'global';
     const cacheKey = `tenant:${tenantId}:products:all:skip:${skip}:take:${take}:search:${search || 'none'}:category:${category || 'none'}:type:${productType || 'none'}:brand:${brand || 'none'}:visc:${viscosity || 'none'}:oilType:${oilType || 'none'}:color:${color || 'none'}:size:${size || 'none'}:minP:${minPrice || 'none'}:maxP:${maxPrice || 'none'}:status:${status || 'none'}`;
 
