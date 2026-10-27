@@ -538,8 +538,8 @@ async function main() {
           orderId: order.id,
           amount: total,
           method: pMethod || 'CASH',
+          gateway: pMethod === 'CASH' ? 'CASH' : 'TERMINAL',
           status: 'SUCCESS',
-          reference: `PAY-TXN-${orderNum}`,
           createdAt: orderDate,
         },
       });
