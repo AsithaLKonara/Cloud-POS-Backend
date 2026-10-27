@@ -9,7 +9,8 @@ async function main() {
   await RoleService.seedDefaultRolesAndPermissions();
 
   const superAdminRole = await prisma.role.findFirst({ where: { name: 'Super Admin' } });
-  const branchAdminRole = await prisma.role.findFirst({ where: { name: 'Branch Admin' } }) || superAdminRole;
+  const tenantAdminRole = await prisma.role.findFirst({ where: { name: 'Admin' } }) || superAdminRole;
+  const branchAdminRole = await prisma.role.findFirst({ where: { name: 'Branch Admin' } }) || tenantAdminRole;
   const cashierRole = await prisma.role.findFirst({ where: { name: 'Cashier' } }) || branchAdminRole;
 
   // 2. Tenants to Seed
@@ -95,27 +96,39 @@ async function main() {
       passwordRaw: 'Admin@123456',
       tenantSlug: 'xonit-platform',
       roleId: superAdminRole?.id,
+      assignBranch: false,
     },
     {
       email: 'retail.admin@xonit.space',
       name: 'Elena Rostova (Boutique Admin)',
       passwordRaw: 'Password@123',
       tenantSlug: 'velvet-threads',
-      roleId: branchAdminRole?.id,
+      roleId: tenantAdminRole?.id,
+      assignBranch: false,
     },
     {
       email: 'bistro.admin@xonit.space',
       name: 'Chef Marcus (Bistro Manager)',
       passwordRaw: 'Password@123',
       tenantSlug: 'artisan-bistro',
-      roleId: branchAdminRole?.id,
+      roleId: tenantAdminRole?.id,
+      assignBranch: false,
     },
     {
       email: 'salon.admin@xonit.space',
       name: 'Dr. Clara Vance (Spa Director)',
       passwordRaw: 'Password@123',
       tenantSlug: 'luxe-spa-wellness',
+      roleId: tenantAdminRole?.id,
+      assignBranch: false,
+    },
+    {
+      email: 'branch.manager@xonit.space',
+      name: 'Kamal Perera (Branch Manager)',
+      passwordRaw: 'Password@123',
+      tenantSlug: 'velvet-threads',
       roleId: branchAdminRole?.id,
+      assignBranch: true,
     },
     {
       email: 'cashier.colombo@xonit.space',
@@ -123,6 +136,7 @@ async function main() {
       passwordRaw: 'Password@123',
       tenantSlug: 'colombo-central',
       roleId: cashierRole?.id,
+      assignBranch: true,
     },
   ];
 
@@ -130,9 +144,9 @@ async function main() {
     const tenant = tenantMap.get(u.tenantSlug);
     const passwordHash = await bcrypt.hash(u.passwordRaw, 10);
 
-    const branch = await prisma.branch.findFirst({
-      where: { tenantId: tenant?.id },
-    });
+    const branch = u.assignBranch
+      ? await prisma.branch.findFirst({ where: { tenantId: tenant?.id } })
+      : null;
 
     const user = await prisma.user.upsert({
       where: { email: u.email },
@@ -140,7 +154,7 @@ async function main() {
         password: passwordHash,
         name: u.name,
         tenantId: tenant?.id,
-        branchId: branch?.id,
+        branchId: branch?.id || null,
         status: 'ACTIVE',
       },
       create: {
@@ -150,7 +164,7 @@ async function main() {
         phone: '+94 77 000 0000',
         status: 'ACTIVE',
         tenantId: tenant?.id,
-        branchId: branch?.id,
+        branchId: branch?.id || null,
       },
     });
 

@@ -443,6 +443,9 @@ export class AuthService {
         branch: {
           select: { id: true, name: true, code: true },
         },
+        tenant: {
+          select: { id: true, name: true, slug: true, businessType: true },
+        },
       },
     });
 
@@ -467,6 +470,8 @@ export class AuthService {
       roles,
       permissions,
       fingerprint: input.fingerprint,
+      tenantId: user.tenantId || null,
+      tenantSlug: user.tenant?.slug || null,
       branchId: user.branchId || null,
     });
 
@@ -501,6 +506,8 @@ export class AuthService {
         birthday: user.birthday,
         phone: user.phone,
         status: user.status,
+        tenantId: user.tenantId,
+        tenant: user.tenant,
         branchId: user.branchId,
         branch: user.branch,
         roles,
@@ -547,6 +554,9 @@ export class AuthService {
             branch: {
               select: { id: true, name: true, code: true },
             },
+            tenant: {
+              select: { id: true, name: true, slug: true, businessType: true },
+            },
           },
         },
       },
@@ -569,6 +579,9 @@ export class AuthService {
       roles,
       permissions,
       fingerprint,
+      tenantId: user.tenantId || null,
+      tenantSlug: user.tenant?.slug || null,
+      branchId: user.branchId || null,
     });
 
     return {
@@ -577,6 +590,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
+        tenantId: user.tenantId,
+        tenant: user.tenant,
         branchId: user.branchId,
         branch: user.branch,
         roles,

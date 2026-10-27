@@ -121,6 +121,14 @@ export class RoleService {
           permissionCodes: allPermissions.map((p) => p.code),
         },
         {
+          name: "Admin",
+          description: "Full administrative access across all branches of the tenant. Executive dashboard, P&L, catalog, inventory, settings, staff.",
+          isSystem: true,
+          permissionCodes: allPermissions
+            .map((p) => p.code)
+            .filter((c) => !c.startsWith("system:platform_settings")),
+        },
+        {
           name: "Branch Admin",
           description: "Full access within assigned branch. Orders, POS, inventory, returns, reports.",
           isSystem: true,
