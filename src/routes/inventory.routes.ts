@@ -16,12 +16,12 @@ import {
   reserveStock,
   releaseStock
 } from '../controllers/inventory.controller';
-import { authenticateJWT, requirePermission } from '../middlewares/auth.middleware';
+import { authenticateJWT, optionalAuth, requirePermission } from '../middlewares/auth.middleware';
 import { auditLog } from '../middlewares/audit.middleware';
 
 const router = Router();
 
-router.get('/branches', getBranches);
+router.get('/branches', optionalAuth, getBranches);
 router.post('/branches', authenticateJWT, requirePermission("branches:create"), auditLog('Branch', 'CREATE'), createBranch);
 router.put('/branches/:id', authenticateJWT, requirePermission("branches:edit"), auditLog('Branch', 'UPDATE'), updateBranch);
 router.delete('/branches/:id', authenticateJWT, requirePermission("branches:delete"), auditLog('Branch', 'DELETE'), deleteBranch);

@@ -2,13 +2,39 @@ import prisma from '../config/prisma';
 
 export const posService = {
   async openSession(data: { branchId: string; terminalId: string; userId: string; openingFloat: number }) {
-    // 1. Verify the branch exists by its ID (branchId is a real UUID, not a code)
-    const branch = await prisma.branch.findUnique({ where: { id: data.branchId } });
-    if (!branch) throw new Error(`Branch not found: ${data.branchId}`);
-
-    // 2. Ensure the user record exists (lookup only, users are managed by auth)
-    const user = await prisma.user.findUnique({ where: { id: data.userId } });
+    // 1. Ensure the user record exists (lookup only, users are managed by auth)
+    const user = await prisma.user.findUnique({
+      where: { id: data.userId },
+      include: { tenant: true }
+    });
     if (!user) throw new Error(`User not found: ${data.userId}`);
+
+    // 2. Resolve branch: direct match, user assigned branch, or tenant branch fallback
+    let branch = data.branchId ? await prisma.branch.findUnique({ where: { id: data.branchId } }) : null;
+    if (!branch && user.branchId) {
+      branch = await prisma.branch.findUnique({ where: { id: user.branchId } });
+    }
+    if (!branch && user.tenantId) {
+      branch = await prisma.branch.findFirst({ where: { tenantId: user.tenantId } });
+    }
+    if (!branch) {
+      if (user.tenantId) {
+        const tenantSlug = user.tenant?.slug || 'tenant';
+        const code = `${tenantSlug.substring(0, 4).toUpperCase()}-01`;
+        branch = await prisma.branch.create({
+          data: {
+            name: `${user.tenant?.name || 'Default'} - Main Branch`,
+            code,
+            address: 'Colombo, Sri Lanka',
+            phone: '+94 11 234 5678',
+            tenantId: user.tenantId
+          }
+        });
+      } else {
+        branch = await prisma.branch.findFirst();
+      }
+    }
+    if (!branch) throw new Error(`Branch not found: ${data.branchId}`);
 
     // 3. Upsert the terminal — create if new, otherwise just update its branch link
     const terminal = await prisma.posTerminal.upsert({
@@ -16,8 +42,9 @@ export const posService = {
       update: { branchId: branch.id },
       create: {
         id: data.terminalId,
-        name: `POS Terminal ${data.terminalId}`,
-        branchId: branch.id
+        name: `POS Terminal ${data.terminalId.substring(0, 8)}`,
+        branchId: branch.id,
+        ...(user.tenantId ? { tenantId: user.tenantId } : {})
       }
     });
 
