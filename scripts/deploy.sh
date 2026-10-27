@@ -32,12 +32,15 @@ mkdir -p /var/log/xonit || mkdir -p "${ROOT_DIR}/logs"
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}[1/5] Pulling latest code from origin main...${NC}"
 if [ -d ".git" ]; then
-  git pull --rebase origin main || true
+  CURRENT_BRANCH=$(git branch --show-current || echo "main")
+  git pull --rebase origin "${CURRENT_BRANCH}" || true
 elif [ -d "Backend/.git" ] && [ -d "Frontend/.git" ]; then
   echo "Pulling Backend repository..."
-  git -C Backend pull --rebase origin main || true
+  B_BRANCH=$(git -C Backend branch --show-current || echo "SaaS-migration")
+  git -C Backend pull --rebase origin "${B_BRANCH}" || true
   echo "Pulling Frontend repository..."
-  git -C Frontend pull --rebase origin main || true
+  F_BRANCH=$(git -C Frontend branch --show-current || echo "SaaS-migration")
+  git -C Frontend pull --rebase origin "${F_BRANCH}" || true
 else
   echo "Not a git repo root, skipping git pull."
 fi
@@ -67,7 +70,7 @@ npx prisma generate
 
 # Apply pending schema migrations safely
 echo "Applying database schema..."
-npx prisma db push --skip-generate || true
+npx prisma db push --accept-data-loss || true
 
 # Compile TypeScript
 echo "Compiling TypeScript..."
