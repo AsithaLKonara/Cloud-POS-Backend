@@ -53,6 +53,9 @@ import apiKeyRoutes from "./routes/api-key.routes";
 import headlessRoutes from "./routes/headless";
 import superadminRoutes from "./routes/superadmin.routes";
 import systemRoutes from "./routes/system.routes";
+import uploadRoutes from "./routes/upload.routes";
+import path from "path";
+import fs from "fs";
 import { RoleService } from "./services/role.service";
 import { SettingService } from "./services/setting.service";
 
@@ -143,6 +146,13 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Static uploads bucket
+const UPLOADS_PATH = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(UPLOADS_PATH)) {
+  fs.mkdirSync(UPLOADS_PATH, { recursive: true });
+}
+app.use('/uploads', express.static(UPLOADS_PATH, { maxAge: '30d' }));
+
 // Apply CSRF Protection to all routes
 app.use(csrfMiddleware);
 
@@ -199,6 +209,8 @@ app.use(`${API_PREFIX}/api-keys`, apiKeyRoutes);
 app.use(`${API_PREFIX}/headless`, headlessRoutes);
 app.use(`${API_PREFIX}/superadmin`, superadminRoutes);
 app.use(`${API_PREFIX}/system`, systemRoutes);
+app.use(`${API_PREFIX}/upload`, uploadRoutes);
+app.use('/upload', uploadRoutes);
 
 // Health Check
 app.get("/health", (req: Request, res: Response) => {
