@@ -107,7 +107,19 @@ if command -v pm2 >/dev/null 2>&1; then
   # Graceful cluster reload: reloads workers one by one without dropping existing HTTP requests
   if pm2 describe xonit-backend >/dev/null 2>&1; then
     echo "Reloading existing PM2 clusters with zero downtime..."
-    pm2 reload ecosystem.config.js --update-env
+    RELOADED=false
+    for attempt in {1..5}; do
+      if pm2 reload ecosystem.config.js --update-env; then
+        RELOADED=true
+        break
+      fi
+      echo "PM2 reload busy, waiting 5 seconds (attempt $attempt/5)..."
+      sleep 5
+    done
+    if [ "$RELOADED" = false ]; then
+      echo "Forcing PM2 reload..."
+      pm2 reload ecosystem.config.js --update-env --force || pm2 restart ecosystem.config.js
+    fi
   else
     echo "Starting PM2 application processes..."
     pm2 start ecosystem.config.js

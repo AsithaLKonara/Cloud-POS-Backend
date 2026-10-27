@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-backend-deploy
+  group: production-vps-deploy
   cancel-in-progress: false
 
 jobs:
