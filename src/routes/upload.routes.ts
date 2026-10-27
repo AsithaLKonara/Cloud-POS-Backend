@@ -90,8 +90,19 @@ router.post(
       }
 
       const subfolder = (req.body.folder || req.query.folder || '').toString().replace(/[^a-zA-Z0-9_\-\/]/g, '');
+      const targetDir = subfolder ? path.join(UPLOADS_DIR, subfolder) : UPLOADS_DIR;
+      if (subfolder && !fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
 
       const results = uploadedFiles.map(f => {
+        if (subfolder) {
+          const expectedPath = path.join(targetDir, f.filename);
+          if (f.path !== expectedPath && fs.existsSync(f.path)) {
+            fs.renameSync(f.path, expectedPath);
+          }
+        }
+
         const relativeUrl = subfolder ? `/uploads/${subfolder}/${f.filename}` : `/uploads/${f.filename}`;
         return {
           filename: f.filename,
