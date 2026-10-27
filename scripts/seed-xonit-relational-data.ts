@@ -354,7 +354,7 @@ async function main() {
           barcode: v.barcode,
           size: (v as any).size || null,
           color: (v as any).color || null,
-          packUnit: v.packUnit || 'Piece',
+          packUnit: (v as any).packUnit || 'Piece',
         },
         create: {
           productId: product.id,
@@ -365,7 +365,7 @@ async function main() {
           costPrice: v.costPrice,
           size: (v as any).size || null,
           color: (v as any).color || null,
-          packUnit: v.packUnit || 'Piece',
+          packUnit: (v as any).packUnit || 'Piece',
           quantity: 100,
         },
       });
@@ -537,7 +537,7 @@ async function main() {
         data: {
           orderId: order.id,
           amount: total,
-          method: pMethod,
+          method: pMethod || 'CASH',
           status: 'SUCCESS',
           reference: `PAY-TXN-${orderNum}`,
           createdAt: orderDate,
