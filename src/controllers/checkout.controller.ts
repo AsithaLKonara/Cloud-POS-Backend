@@ -50,11 +50,12 @@ export const initiateCheckout = async (req: Request, res: Response) => {
     }
 
     // ── Order Velocity Anomaly Check ──────────────────────────────────
+    const isRateLimitDisabled = process.env.ENABLE_RATE_LIMIT === 'false' || process.env.DISABLE_RATE_LIMIT === 'true';
     const forwardedFor = req.headers['x-forwarded-for'] as string | undefined;
     const ip = (forwardedFor ? forwardedFor.split(',')[0]?.trim() : undefined)
                || req.socket?.remoteAddress || 'unknown';
 
-    if (customer?.phone) {
+    if (!isRateLimitDisabled && customer?.phone) {
       const isBlocked = await velocityService.isBlocked(
         customer.phone, ip, deviceFingerprint
       );
@@ -66,7 +67,7 @@ export const initiateCheckout = async (req: Request, res: Response) => {
     }
 
     // ── Device Fingerprint Velocity Check ─────────────────────────────
-    if (deviceFingerprint) {
+    if (!isRateLimitDisabled && deviceFingerprint) {
       const fingerprintKey = `fingerprint:checkout:${deviceFingerprint}`;
       const attempts = await redisClient.incr(fingerprintKey);
       

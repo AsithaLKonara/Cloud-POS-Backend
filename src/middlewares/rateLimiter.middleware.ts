@@ -17,6 +17,10 @@ export const createRateLimiter = (endpointName: string, maxAttempts: number, win
       ip = xForwardedFor[0]?.trim() || ip;
     }
 
+    if (process.env.ENABLE_RATE_LIMIT === 'false' || process.env.DISABLE_RATE_LIMIT === 'true') {
+      return next();
+    }
+
     if (process.env.NODE_ENV !== 'production' && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) {
       return next();
     }

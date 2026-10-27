@@ -67,6 +67,10 @@ export const trackFailedLogin = async (ip: string, email: string) => {
  * Returns 429 immediately if the IP is currently locked out.
  */
 export const checkLoginLockout = async (req: Request, res: Response, next: NextFunction) => {
+  if (process.env.ENABLE_RATE_LIMIT === 'false' || process.env.DISABLE_RATE_LIMIT === 'true') {
+    return next();
+  }
+
   if (redisClient.status !== 'ready') {
     return next();
   }
