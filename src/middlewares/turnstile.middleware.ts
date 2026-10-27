@@ -10,14 +10,14 @@ export const verifyTurnstile = async (req: Request, res: Response, next: NextFun
   try {
     const secret = process.env.TURNSTILE_SECRET_KEY;
 
-    // Dev bypass: if key not set or we're in development, skip verification
-    // In production TURNSTILE_SECRET_KEY MUST be set
-    if (!secret || process.env.NODE_ENV !== 'production') {
-      if (process.env.NODE_ENV === 'production' && !secret) {
-        console.error('[Turnstile] TURNSTILE_SECRET_KEY is not defined in production!');
-        return res.status(500).json({ error: 'Server security configuration error.' });
-      }
-      // Skip CAPTCHA in non-production environments
+    // Skip verification in development, or if CAPTCHA is disabled, or when using test keys
+    if (
+      process.env.ENABLE_CAPTCHA === 'false' ||
+      !secret ||
+      secret === 'disabled' ||
+      secret === TEST_ALWAYS_PASS_SECRET ||
+      process.env.NODE_ENV !== 'production'
+    ) {
       return next();
     }
 
