@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { productWithVariantsSelect } from '../dto/product.dto';
 import { withCache, invalidateCache } from '../utils/cache.util';
 import { inventoryService } from './inventory.service';
+import { requestContext } from '../context/RequestContext';
 
 export async function signImageUrl(url: string | null): Promise<string | null> {
   // S3 has been removed; media is served locally or statically.
@@ -38,8 +39,8 @@ export class ProductService {
     maxPrice?: number;
     status?: string;
   }) {
-    const { skip = 0, take = 50, search, category, productType, brand, viscosity, oilType, color, size, minPrice, maxPrice, status } = params;
-    const cacheKey = `products:all:skip:${skip}:take:${take}:search:${search || 'none'}:category:${category || 'none'}:type:${productType || 'none'}:brand:${brand || 'none'}:visc:${viscosity || 'none'}:oilType:${oilType || 'none'}:color:${color || 'none'}:size:${size || 'none'}:minP:${minPrice || 'none'}:maxP:${maxPrice || 'none'}:status:${status || 'none'}`;
+    const tenantId = requestContext.getStore()?.tenantId || 'global';
+    const cacheKey = `tenant:${tenantId}:products:all:skip:${skip}:take:${take}:search:${search || 'none'}:category:${category || 'none'}:type:${productType || 'none'}:brand:${brand || 'none'}:visc:${viscosity || 'none'}:oilType:${oilType || 'none'}:color:${color || 'none'}:size:${size || 'none'}:minP:${minPrice || 'none'}:maxP:${maxPrice || 'none'}:status:${status || 'none'}`;
 
     return withCache(cacheKey, 900, async () => {
       const where: Prisma.ProductWhereInput = {
