@@ -17,7 +17,7 @@ export const otpService = {
     const redisKey = `otp:${phone}`;
     await redisClient.set(redisKey, otp, 'EX', OTP_EXPIRY_SECONDS);
     
-    const message = `Your Seramaaduwen verification code is: ${otp}. Valid for 5 minutes.`;
+    const message = `Your verification code is: ${otp}. Valid for 5 minutes.`;
     
     try {
       // Use the real SMS gateway if SEND_LK_API_KEY is configured
