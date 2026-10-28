@@ -50,8 +50,8 @@ export class SettingService {
   static async seedDefaultSettings() {
     const defaults = [
       // General
-      { key: "store_name", value: "SERAMAADUWEN.LK", type: "string", group: "general", isPublic: true },
-      { key: "support_email", value: "support@seramaaduwen.lk", type: "string", group: "general", isPublic: true },
+      { key: "store_name", value: "Store Dispatch Hub", type: "string", group: "general", isPublic: true },
+      { key: "support_email", value: "support@xonitspace.com", type: "string", group: "general", isPublic: true },
       { key: "support_phone", value: "+94 77 123 4567", type: "string", group: "general", isPublic: true },
       // Currency & Tax
       { key: "default_currency", value: "LKR", type: "string", group: "currency", isPublic: true },

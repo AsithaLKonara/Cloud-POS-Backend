@@ -11,12 +11,12 @@ export const getMetaCatalogFeed = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    const storeUrl = process.env.STORE_URL || 'https://seramaaduwen.lk';
+    const storeUrl = process.env.STORE_URL || 'https://xonitspace.com';
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
   <channel>
-    <title>SERAMAADUWEN.LK Product Catalog</title>
+    <title>Product Catalog Feed</title>
     <link>${storeUrl}</link>
     <description>Dynamic product feed for Meta Ads</description>
 `;
@@ -30,10 +30,10 @@ export const getMetaCatalogFeed = async (req: Request, res: Response) => {
         const title = variant.name ? `${product.name} - ${variant.name}` : product.name;
         const description = product.description || title;
         const link = `${storeUrl}/product/${product.slug}`;
-        const imageLink = variant.featuredImage || product.variants[0]?.featuredImage || `${storeUrl}/placeholder.jpg`;
+        const imageLink = variant.featuredImage || product.variants[0]?.featuredImage || `${storeUrl}/placeholder.png`;
         const price = variant.salePrice ? variant.salePrice : variant.price;
         const availability = variant.quantity > 0 ? 'in stock' : 'out of stock';
-        const brand = 'Seramaaduwen';
+        const brand = product.brand || 'Store';
 
         xml += `    <item>
       <g:id><![CDATA[${id}]]></g:id>
