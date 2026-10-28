@@ -27,7 +27,7 @@ const productSchema = z.object({
   barcode: z.string().optional().nullable(),
   description: z.string().optional(),
   categoryId: z.string().optional(),
-  productType: z.string().optional().default('LUBRICANT'),
+  productType: z.string().optional().default('RETAIL'),
   brand: z.string().optional().nullable(),
   viscosity: z.string().optional().nullable(),
   oilType: z.string().optional().nullable(),
