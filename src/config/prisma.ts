@@ -4,8 +4,15 @@ import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import { requestContext } from '../context/RequestContext';
 import { logger } from '../utils/logger';
+import * as path from 'path';
 
 dotenv.config();
+if (!process.env.DATABASE_URL) {
+  dotenv.config({ path: path.join(__dirname, '../../.env') });
+}
+if (!process.env.DATABASE_URL) {
+  dotenv.config({ path: path.join(__dirname, '../../../.env') });
+}
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

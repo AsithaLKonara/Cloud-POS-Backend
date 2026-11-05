@@ -2,13 +2,36 @@ import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import { signImageUrl } from './product.service';
 import { NotificationService } from './notification.service';
+import { requestContext } from '../context/RequestContext';
 
 export const inventoryService = {
 
   // ─── Branches ────────────────────────────────────────────────────────────────
   async getBranches() {
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const restrictedBranchId = store?.branchId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+
+    const branchWhere: any = {};
+    if (tenantId && !isPlatformAdmin) {
+      branchWhere.tenantId = tenantId;
+    }
+    if (restrictedBranchId && !isPlatformAdmin) {
+      branchWhere.id = restrictedBranchId;
+    }
+
+    const orderWhere: any = { branchId: { not: null } };
+    if (tenantId && !isPlatformAdmin) {
+      orderWhere.tenantId = tenantId;
+    }
+    if (restrictedBranchId && !isPlatformAdmin) {
+      orderWhere.branchId = restrictedBranchId;
+    }
+
     const [branches, revenueAgg] = await Promise.all([
       prisma.branch.findMany({
+        where: branchWhere,
         orderBy: { name: 'asc' },
         include: {
           manager: {
@@ -22,9 +45,7 @@ export const inventoryService = {
       prisma.order.groupBy({
         by: ['branchId'],
         _sum: { total: true },
-        where: {
-          branchId: { not: null }
-        }
+        where: orderWhere
       })
     ]);
 
@@ -49,15 +70,36 @@ export const inventoryService = {
     });
   },
 
-  async createBranch(data: { name: string, code: string, address?: string, phone?: string, type?: string, isActive?: boolean }) {
-    return prisma.branch.create({ data });
+  async createBranch(data: { name: string, code: string, address?: string, phone?: string, type?: string, isActive?: boolean, tenantId?: string }) {
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId || data.tenantId;
+    return prisma.branch.create({
+      data: {
+        ...data,
+        ...(tenantId ? { tenantId } : {})
+      } as any
+    });
   },
 
   async updateBranch(id: string, data: Partial<{ name: string, code: string, address: string, phone: string, type: string, isActive: boolean }>) {
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+    if (tenantId && !isPlatformAdmin) {
+      const b = await prisma.branch.findFirst({ where: { id, tenantId } });
+      if (!b) throw new Error('Branch not found or access denied');
+    }
     return prisma.branch.update({ where: { id }, data });
   },
 
   async deleteBranch(id: string) {
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+    if (tenantId && !isPlatformAdmin) {
+      const b = await prisma.branch.findFirst({ where: { id, tenantId } });
+      if (!b) throw new Error('Branch not found or access denied');
+    }
     // Soft delete by setting isActive to false
     return prisma.branch.update({ where: { id }, data: { isActive: false } });
   },
@@ -66,8 +108,21 @@ export const inventoryService = {
   async getInventory(search?: string, branchId?: string, status?: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const restrictedBranchId = store?.branchId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+
     const where: any = {};
-    if (branchId) where.branchId = branchId;
+    if (restrictedBranchId && !isPlatformAdmin) {
+      where.branchId = restrictedBranchId;
+    } else if (branchId) {
+      where.branchId = branchId;
+    }
+
+    if (tenantId && !isPlatformAdmin) {
+      where.branch = { tenantId };
+    }
     if (search) {
       where.variant = {
         OR: [
@@ -139,7 +194,14 @@ export const inventoryService = {
 
   // ─── KPI Stats ───────────────────────────────────────────────────────────────
   async getStats(branchId?: string) {
-    const baseQuery = `
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const restrictedBranchId = store?.branchId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+
+    const effectiveBranchId = (restrictedBranchId && !isPlatformAdmin) ? restrictedBranchId : branchId;
+
+    let baseQuery = `
       SELECT 
         CAST(COALESCE(SUM(ii."quantity"), 0) AS INTEGER) as "totalQty",
         CAST(COALESCE(SUM(CASE WHEN ii."quantity" = 0 THEN 1 ELSE 0 END), 0) AS INTEGER) as "outOfStockCount",
@@ -148,14 +210,29 @@ export const inventoryService = {
         CAST(COALESCE(SUM(ii."quantity" * COALESCE(pv."costPrice", 0)), 0) AS FLOAT) as "estimatedCostValue"
       FROM "InventoryItem" ii
       JOIN "ProductVariant" pv ON ii."variantId" = pv."id"
+      JOIN "Branch" b ON ii."branchId" = b."id"
     `;
 
-    const query = branchId ? `${baseQuery} WHERE ii."branchId" = $1` : baseQuery;
-    const args = branchId ? [branchId] : [];
+    const whereClauses: string[] = [];
+    const args: any[] = [];
+    if (effectiveBranchId) {
+      args.push(effectiveBranchId);
+      whereClauses.push(`ii."branchId" = $${args.length}`);
+    }
+    if (tenantId && !isPlatformAdmin) {
+      args.push(tenantId);
+      whereClauses.push(`b."tenantId" = $${args.length}`);
+    }
+
+    const query = whereClauses.length > 0 ? `${baseQuery} WHERE ${whereClauses.join(' AND ')}` : baseQuery;
+    const variantWhere: any = {};
+    if (tenantId && !isPlatformAdmin) {
+      variantWhere.product = { tenantId };
+    }
 
     const [statsResult, totalVariants] = await Promise.all([
       prisma.$queryRawUnsafe(query, ...args) as Promise<any[]>,
-      prisma.productVariant.count(),
+      prisma.productVariant.count({ where: variantWhere }),
     ]);
 
     const stats = Array.isArray(statsResult) && statsResult.length > 0 ? statsResult[0] : {
@@ -187,6 +264,32 @@ export const inventoryService = {
   }, tx: any = prisma) {
     const { variantId, branchId, type, quantity, reason, reference } = data;
 
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const restrictedBranchId = store?.branchId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+
+    // Resolve branchId (supports both UUID and branch code)
+    let targetBranchId = branchId;
+    if (tx.branch?.findFirst) {
+      const branchWhere: any = { OR: [{ id: branchId }, { code: branchId }] };
+      if (tenantId && !isPlatformAdmin) {
+        branchWhere.tenantId = tenantId;
+      }
+      const branchObj = await tx.branch.findFirst({
+        where: branchWhere
+      });
+      if (branchObj) {
+        targetBranchId = branchObj.id;
+      } else if (tenantId && !isPlatformAdmin) {
+        throw new Error('Branch isolation violation: Target branch does not belong to your tenant or does not exist.');
+      }
+    }
+
+    if (restrictedBranchId && !isPlatformAdmin && restrictedBranchId !== targetBranchId) {
+      throw new Error('Branch isolation violation: You are restricted to your assigned branch.');
+    }
+
     // Check if variant belongs to a product that does not track inventory (e.g. Services, Digital Goods)
     const variantRecord = await tx.productVariant.findUnique({
       where: { id: variantId },
@@ -210,7 +313,7 @@ export const inventoryService = {
       const result = await tx.inventoryItem.updateMany({
         where: { 
           variantId, 
-          branchId,
+          branchId: targetBranchId,
           quantity: { gte: Math.abs(quantity) }
         },
         data: { quantity: { decrement: Math.abs(quantity) } }
@@ -220,12 +323,12 @@ export const inventoryService = {
       }
       
       inv = await tx.inventoryItem.findUnique({
-        where: { variantId_branchId: { variantId, branchId } }
+        where: { variantId_branchId: { variantId, branchId: targetBranchId } }
       });
     } else {
       inv = await tx.inventoryItem.upsert({
-        where: { variantId_branchId: { variantId, branchId } },
-        create: { variantId, branchId, quantity: Math.max(0, delta) },
+        where: { variantId_branchId: { variantId, branchId: targetBranchId } },
+        create: { variantId, branchId: targetBranchId, quantity: Math.max(0, delta) },
         update: { quantity: { increment: delta } },
       });
     }
@@ -246,7 +349,7 @@ export const inventoryService = {
     const transaction = await tx.inventoryTransaction.create({
       data: {
         variantId,
-        branchId,
+        branchId: targetBranchId,
         type,
         quantityChange: delta,
         reason,

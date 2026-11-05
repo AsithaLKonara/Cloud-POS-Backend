@@ -26,6 +26,12 @@ router.put('/tenants/:tenantId', (req, res) => controller.updateTenantSettings(r
 router.patch('/tenants/:tenantId/status', (req, res) => controller.updateTenantStatus(req, res));
 router.patch('/tenants/:tenantId/trial', (req, res) => controller.extendTrial(req, res));
 
+// Tenant Super Admins Management
+router.get('/tenants/:tenantId/admins', (req, res) => controller.getTenantAdmins(req, res));
+router.post('/tenants/:tenantId/admins', (req, res) => controller.createTenantAdmin(req, res));
+router.patch('/tenants/:tenantId/admins/:adminId/status', (req, res) => controller.updateTenantAdminStatus(req, res));
+router.post('/tenants/:tenantId/admins/:adminId/reset-password', (req, res) => controller.resetTenantAdminPassword(req, res));
+
 // Infrastructure & Cluster Telemetry
 router.get('/cluster', (req, res) => controller.getCluster(req, res));
 

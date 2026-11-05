@@ -1,8 +1,16 @@
 import prisma from '../config/prisma';
+import { requestContext } from '../context/RequestContext';
 
 export const auditService = {
   getLogs: async (search?: string, action?: string, timeframe?: string, page: number = 1, limit: number = 50) => {
+    const store = requestContext.getStore();
+    const tenantId = store?.tenantId;
+    const isPlatformAdmin = store?.isPlatformAdmin;
+
     const where: any = {};
+    if (tenantId && !isPlatformAdmin) {
+      where.tenantId = tenantId;
+    }
     
     if (action && action !== 'All Actions') {
       where.action = action;
@@ -23,6 +31,9 @@ export const auditService = {
       where.OR = [
         { userId: { contains: search, mode: 'insensitive' } },
         { entity: { contains: search, mode: 'insensitive' } },
+        { action: { contains: search, mode: 'insensitive' } },
+        { user: { name: { contains: search, mode: 'insensitive' } } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
       ];
     }
     

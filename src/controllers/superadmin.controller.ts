@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import prisma from '../config/prisma';
 import { SuperAdminService } from '../services/superadmin.service';
 import { TenantService } from '../services/tenant.service';
 
@@ -177,6 +179,172 @@ export class SuperAdminController {
       res.status(200).json({ success: true, message: `Invoice status updated to ${status}`, data: updated });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message || 'Failed to update invoice status' });
+    }
+  }
+
+  async getTenantAdmins(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.params.tenantId as string;
+      const admins = await (prisma as any).user.findMany({
+        where: {
+          tenantId,
+          userRoles: {
+            some: {
+              role: {
+                name: { in: ['ADMIN', 'Admin', 'Super Admin', 'SUPER_ADMIN', 'Tenant Admin'] },
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          status: true,
+          createdAt: true,
+          branch: {
+            select: { id: true, name: true, code: true },
+          },
+          userRoles: {
+            select: {
+              role: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      res.status(200).json({ success: true, data: admins });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch tenant admins' });
+    }
+  }
+
+  async createTenantAdmin(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.params.tenantId as string;
+      const { email, password, name, phone, branchId } = req.body;
+      if (!email || !password) {
+        res.status(400).json({ success: false, message: 'Email and password are required.' });
+        return;
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+      const existingUser = await (prisma as any).user.findUnique({
+        where: { email: normalizedEmail },
+      });
+      if (existingUser) {
+        res.status(400).json({ success: false, message: `User with email "${normalizedEmail}" already exists.` });
+        return;
+      }
+
+      const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
+      if (!tenant) {
+        res.status(404).json({ success: false, message: 'Tenant not found.' });
+        return;
+      }
+
+      let targetBranchId = branchId;
+      if (!targetBranchId) {
+        const firstBranch = await (prisma as any).branch.findFirst({ where: { tenantId } });
+        targetBranchId = firstBranch?.id || null;
+      }
+
+      let adminRole = await (prisma as any).role.findUnique({ where: { name: 'ADMIN' } });
+      if (!adminRole) {
+        adminRole = await (prisma as any).role.create({
+          data: { name: 'ADMIN', description: 'Tenant Administrator', isSystem: true, status: 'Active' },
+        });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+
+      const user = await (prisma as any).user.create({
+        data: {
+          email: normalizedEmail,
+          password: hashedPassword,
+          name: name || 'Tenant Admin',
+          phone: phone || null,
+          tenantId,
+          branchId: targetBranchId,
+          status: 'ACTIVE',
+          userRoles: {
+            create: { roleId: adminRole.id },
+          },
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          status: true,
+          branchId: true,
+          createdAt: true,
+        },
+      });
+
+      res.status(201).json({ success: true, message: 'Tenant admin created successfully', data: user });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to create tenant admin' });
+    }
+  }
+
+  async updateTenantAdminStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId, adminId } = req.params;
+      const { status } = req.body;
+      if (!status || !['ACTIVE', 'INACTIVE', 'SUSPENDED'].includes(status.toUpperCase())) {
+        res.status(400).json({ success: false, message: 'Invalid status. Must be ACTIVE or SUSPENDED.' });
+        return;
+      }
+
+      const user = await (prisma as any).user.findFirst({
+        where: { id: adminId, tenantId },
+      });
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Tenant admin user not found.' });
+        return;
+      }
+
+      const updated = await (prisma as any).user.update({
+        where: { id: adminId },
+        data: { status: status.toUpperCase() },
+        select: { id: true, email: true, name: true, status: true },
+      });
+
+      res.status(200).json({ success: true, message: `Tenant admin status updated to ${status.toUpperCase()}`, data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update admin status' });
+    }
+  }
+
+  async resetTenantAdminPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId, adminId } = req.params;
+      const { newPassword } = req.body;
+      const passwordToSet = newPassword || 'Password@123';
+
+      const user = await (prisma as any).user.findFirst({
+        where: { id: adminId, tenantId },
+      });
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Tenant admin user not found.' });
+        return;
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(passwordToSet, salt);
+
+      await (prisma as any).user.update({
+        where: { id: adminId },
+        data: { password: hashedPassword },
+      });
+
+      res.status(200).json({ success: true, message: 'Tenant admin password successfully reset.' });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to reset admin password' });
     }
   }
 }
