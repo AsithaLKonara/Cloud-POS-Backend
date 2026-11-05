@@ -13,6 +13,8 @@ router.get('/cancel', handlePaymentCancel);
 // Endpoint for retrying a failed payment
 router.post('/retry/:orderNumber', retryPayment);
 
+router.get('/', getPaymentTransactions);
+router.get('', getPaymentTransactions);
 router.get('/transactions', getPaymentTransactions);
 router.get('/kpis', getPaymentKpis);
 router.get('/methods', getPaymentMethods);

@@ -699,8 +699,7 @@ export class SuperAdminService {
 
     const nextSeq = invoices.length + 1;
     const now = new Date();
-    const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const invoiceNumber = `INV-${yyyymm}-${String(nextSeq).padStart(4, '0')}`;
+    const invoiceNumber = `INV-${now.getFullYear()}-${String(nextSeq).padStart(4, '0')}`;
     const newInvoice = {
       id: `inv-${Date.now()}`,
       invoiceNumber,

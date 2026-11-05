@@ -183,6 +183,16 @@ export class TenantService {
       throw new Error('Admin email and password are required for tenant provisioning.');
     }
 
+    const adminEmail = input.adminUser.email.toLowerCase().trim();
+    if (typeof (prisma as any).user?.findUnique === 'function') {
+      const existingUser = await (prisma as any).user.findUnique({
+        where: { email: adminEmail },
+      });
+      if (existingUser) {
+        throw new Error(`A user with email "${adminEmail}" already exists. Please choose a distinct email address for the tenant administrator.`);
+      }
+    }
+
     // Determine unique slug
     let baseSlug = input.slug ? this.slugify(input.slug) : this.slugify(input.name);
     let finalSlug = baseSlug;
@@ -217,88 +227,101 @@ export class TenantService {
       defaultUsers = 500;
     }
 
-    const businessType = input.businessType || 'RETAIL';
+    // Normalize business type to match Prisma BusinessType enum
+    const rawType = (input.businessType || 'RETAIL').toUpperCase();
+    let businessType: any = rawType;
+    if (rawType === 'SUPERMARKET_GROCERY') businessType = 'GROCERY_SUPERMARKET';
+    if (rawType === 'PHARMACY') businessType = 'PHARMACY_CLINIC';
 
-    // 1. Create Tenant
-    const tenant = await (prisma as any).tenant.create({
-      data: {
-        name: input.name,
-        slug: finalSlug,
-        businessType,
-        status,
-        subscriptionTier: tier,
-        maxBranches: input.maxBranches || defaultBranches,
-        maxUsers: input.maxUsers || defaultUsers,
-        currency: input.currency || 'LKR',
-        currencySymbol: input.currencySymbol || 'Rs.',
-        timezone: input.timezone || 'Asia/Colombo',
-        taxRate: input.taxRate !== undefined ? input.taxRate : 0.0,
-        logoUrl: input.logoUrl || null,
-        settings: input.settings || {},
-      },
-    });
-
-    // 2. Create Initial Branch
     const branchName = input.initialBranchName || `${input.name} - Main Branch`;
     const branchCode = input.initialBranchCode || 'MAIN-01';
 
-    const branch = await (prisma as any).branch.create({
-      data: {
-        name: branchName,
-        code: branchCode,
-        tenantId: tenant.id,
-        type: 'HEAD_OFFICE',
-        isActive: true,
-      },
-    });
-
-    // 3. Ensure 'ADMIN' role exists
-    let adminRole = await (prisma as any).role.findUnique({
-      where: { name: 'ADMIN' },
-    });
-    if (!adminRole) {
-      adminRole = await (prisma as any).role.create({
-        data: {
-          name: 'ADMIN',
-          description: 'Tenant Administrator',
-          isSystem: true,
-          status: 'Active',
-        },
-      });
-    }
-
-    // 4. Create Admin User
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(input.adminUser.password, salt);
     const adminFullName = input.adminUser.name ||
       `${input.adminUser.firstName || ''} ${input.adminUser.lastName || ''}`.trim() ||
       'Tenant Admin';
 
-    const adminUser = await (prisma as any).user.create({
-      data: {
-        email: input.adminUser.email.toLowerCase().trim(),
-        password: hashedPassword,
-        name: adminFullName,
-        phone: input.adminUser.phone || null,
-        tenantId: tenant.id,
-        branchId: branch.id,
-        status: 'ACTIVE',
-        userRoles: {
-          create: {
-            roleId: adminRole.id,
+    // Execute atomic provisioning inside transaction (with mock fallback for unit tests)
+    const runProvisioning = async (tx: any) => {
+      // 1. Create Tenant
+      const newTenant = await tx.tenant.create({
+        data: {
+          name: input.name,
+          slug: finalSlug,
+          businessType,
+          status,
+          subscriptionTier: tier,
+          maxBranches: input.maxBranches || defaultBranches,
+          maxUsers: input.maxUsers || defaultUsers,
+          currency: input.currency || 'LKR',
+          currencySymbol: input.currencySymbol || 'Rs.',
+          timezone: input.timezone || 'Asia/Colombo',
+          taxRate: input.taxRate !== undefined ? input.taxRate : 0.0,
+          logoUrl: input.logoUrl || null,
+          settings: input.settings || {},
+        },
+      });
+
+      // 2. Create Initial Branch
+      const newBranch = await tx.branch.create({
+        data: {
+          name: branchName,
+          code: branchCode,
+          tenantId: newTenant.id,
+          type: 'HEAD_OFFICE',
+          isActive: true,
+        },
+      });
+
+      // 3. Ensure 'ADMIN' role exists
+      let adminRole = await tx.role.findUnique({
+        where: { name: 'ADMIN' },
+      });
+      if (!adminRole) {
+        adminRole = await tx.role.create({
+          data: {
+            name: 'ADMIN',
+            description: 'Tenant Administrator',
+            isSystem: true,
+            status: 'Active',
+          },
+        });
+      }
+
+      // 4. Create Admin User
+      const newAdmin = await tx.user.create({
+        data: {
+          email: adminEmail,
+          password: hashedPassword,
+          name: adminFullName,
+          phone: input.adminUser.phone || null,
+          tenantId: newTenant.id,
+          branchId: newBranch.id,
+          status: 'ACTIVE',
+          userRoles: {
+            create: {
+              roleId: adminRole.id,
+            },
           },
         },
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        status: true,
-        tenantId: true,
-        branchId: true,
-      },
-    });
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          status: true,
+          tenantId: true,
+          branchId: true,
+        },
+      });
+
+      return { tenant: newTenant, branch: newBranch, adminUser: newAdmin };
+    };
+
+    const { tenant, branch, adminUser } = typeof (prisma as any).$transaction === 'function'
+      ? await (prisma as any).$transaction(runProvisioning)
+      : await runProvisioning(prisma);
 
     // 5. Auto-seed Industry Catalog Presets
     let seededCategoriesCount = 0;

@@ -129,9 +129,11 @@ export const processPosOrder = async (req: Request, res: Response) => {
       tableId,
       splitPayments,
       metadata,
+      discount: rawDiscount = 0,
     } = req.body;
     
     const orderNumber = `POS-${Date.now()}`;
+    const discountAmount = Math.max(0, Number(rawDiscount) || 0);
     
     // 1. Validate vouchers and calculate deductions
     let voucherDeduction = 0;
@@ -177,15 +179,28 @@ export const processPosOrder = async (req: Request, res: Response) => {
     }
 
     const calculatedTax = 0;
-    const calculatedTotal = Math.max(0, (calculatedSubtotal + calculatedTax) - voucherDeduction);
+    const effectiveDiscount = Math.min(calculatedSubtotal, discountAmount);
+    const calculatedTotal = Math.max(0, (calculatedSubtotal + calculatedTax) - voucherDeduction - effectiveDiscount);
 
     // Validate branchId
     if (!branchId) {
       return res.status(400).json({ error: 'Branch ID is required to process a POS order.' });
     }
-    const branchExists = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } });
+    const branchExists = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true, tenantId: true } });
     if (!branchExists) {
       return res.status(400).json({ error: `Branch "${branchId}" not found. Please ensure your account is assigned to a valid branch.` });
+    }
+
+    const user = (req as any).user;
+    if (user?.tenantId && branchExists.tenantId && user.tenantId !== branchExists.tenantId) {
+      return res.status(403).json({ error: 'Tenant isolation violation: Cannot process POS order for another tenant\'s branch.' });
+    }
+
+    if (user?.branchId && user.branchId !== branchId) {
+      const isTenantAdmin = user?.roles?.some((r: string) => ['ADMIN', 'SUPER_ADMIN', 'Super Admin', 'SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN'].includes(r));
+      if (!isTenantAdmin) {
+        return res.status(403).json({ error: 'Branch isolation violation: You are restricted to your assigned branch.' });
+      }
     }
 
     // 1.8 Inventory check
@@ -248,14 +263,18 @@ export const processPosOrder = async (req: Request, res: Response) => {
       ? 'CREDIT_ACCOUNT' 
       : (Array.isArray(splitPayments) && splitPayments.length > 0 ? 'SPLIT' : paymentMethod);
 
+    const tenantId = (req as any).user?.tenantId || branchExists.tenantId || null;
+
     const order = await prisma.order.create({
       data: {
         orderNumber,
+        tenantId,
         type: 'POS',
         status: 'DELIVERED', // POS orders are delivered instantly
         paymentStatus: isCredit ? 'UNPAID' : 'PAID',
         paymentMethod: effectivePaymentMethod,
         subtotal: calculatedSubtotal,
+        discount: effectiveDiscount + voucherDeduction,
         tax: calculatedTax,
         shippingFee: 0,
         total: calculatedTotal,
@@ -356,6 +375,36 @@ export const processPosOrder = async (req: Request, res: Response) => {
         where: { id: tableId },
         data: { status: 'AVAILABLE' }
       }).catch(() => {});
+    }
+
+    // 3.95 Create PaymentTransaction records for Cash & Payments ledger
+    if (Array.isArray(splitPayments) && splitPayments.length > 0) {
+      for (const sp of splitPayments) {
+        const amt = Number(sp.amount) || 0;
+        if (amt > 0) {
+          await prisma.paymentTransaction.create({
+            data: {
+              orderId: order.id,
+              customerId: finalCustomerId || null,
+              gateway: sp.method?.toUpperCase() || 'CASH',
+              method: sp.method?.toUpperCase() || 'CASH',
+              amount: amt,
+              status: 'Paid',
+            }
+          }).catch((err) => console.error('[POS PaymentTransaction Error]:', err));
+        }
+      }
+    } else {
+      await prisma.paymentTransaction.create({
+        data: {
+          orderId: order.id,
+          customerId: finalCustomerId || null,
+          gateway: effectivePaymentMethod || 'CASH',
+          method: effectivePaymentMethod || 'CASH',
+          amount: calculatedTotal,
+          status: isCredit ? 'Pending' : 'Paid',
+        }
+      }).catch((err) => console.error('[POS PaymentTransaction Error]:', err));
     }
     
     // 4. Deduct Inventory

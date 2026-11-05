@@ -74,7 +74,46 @@ export const getPaymentTransactions = async (req: Request, res: Response, next: 
 
     const skip = (page - 1) * limit;
 
+    const user = (req as any).user;
+    const tenantId = user?.tenantId;
+    const branchId = user?.branchId;
+    const isPlatformAdmin = user?.isPlatformAdmin || user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'SUPER_ADMIN', 'Super Admin'].includes(r));
+
+    // Auto-sync any existing paid/delivered orders that lack PaymentTransaction records
+    try {
+      const ordersWithoutTx = await prisma.order.findMany({
+        where: {
+          payments: { none: {} },
+          ...(tenantId && !isPlatformAdmin ? { tenantId } : {})
+        },
+        take: 50
+      });
+      if (ordersWithoutTx.length > 0) {
+        for (const ord of ordersWithoutTx) {
+          await prisma.paymentTransaction.create({
+            data: {
+              orderId: ord.id,
+              customerId: ord.customerId,
+              gateway: ord.paymentMethod || 'CASH',
+              method: ord.paymentMethod || 'CASH',
+              amount: ord.total,
+              status: ord.paymentStatus === 'PAID' ? 'Paid' : (ord.paymentStatus === 'FAILED' ? 'Failed' : 'Pending'),
+              createdAt: ord.createdAt
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      // Soft-fail auto-sync
+    }
+
     let where: any = {};
+    if (tenantId && !isPlatformAdmin) {
+      where.order = { ...where.order, tenantId };
+    }
+    if (branchId && !isPlatformAdmin) {
+      where.order = { ...where.order, branchId };
+    }
     if (gateway && gateway !== "All") {
       where.gateway = gateway;
     }
@@ -145,7 +184,18 @@ export const getPaymentKpis = async (req: Request, res: Response, next: NextFunc
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     
+    const user = (req as any).user;
+    const tenantId = user?.tenantId;
+    const branchId = user?.branchId;
+    const isPlatformAdmin = user?.isPlatformAdmin || user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'SUPER_ADMIN', 'Super Admin'].includes(r));
+
     let where: any = {};
+    if (tenantId && !isPlatformAdmin) {
+      where.order = { ...where.order, tenantId };
+    }
+    if (branchId && !isPlatformAdmin) {
+      where.order = { ...where.order, branchId };
+    }
     if (gateway && gateway !== "All") {
       where.gateway = gateway;
     }
@@ -161,10 +211,14 @@ export const getPaymentKpis = async (req: Request, res: Response, next: NextFunc
       orderBy: { createdAt: 'asc' }
     });
 
-    const totalAmount = transactions.filter((t: any) => t.status === "Paid").reduce((acc: number, t: any) => acc + t.amount, 0);
-    const successfulCount = transactions.filter((t: any) => t.status === "Paid").length;
-    const pendingCount = transactions.filter((t: any) => t.status === "Pending").length;
-    const failedCount = transactions.filter((t: any) => t.status === "Failed").length;
+    const isPaid = (s: string) => ['paid', 'success', 'completed'].includes((s || '').toLowerCase());
+    const isPending = (s: string) => ['pending', 'unpaid', 'awaiting_payment'].includes((s || '').toLowerCase());
+    const isFailed = (s: string) => ['failed', 'cancelled', 'rejected'].includes((s || '').toLowerCase());
+
+    const totalAmount = transactions.filter((t: any) => isPaid(t.status)).reduce((acc: number, t: any) => acc + t.amount, 0);
+    const successfulCount = transactions.filter((t: any) => isPaid(t.status)).length;
+    const pendingCount = transactions.filter((t: any) => isPending(t.status)).length;
+    const failedCount = transactions.filter((t: any) => isFailed(t.status)).length;
     const totalCount = transactions.length;
     const successRate = totalCount > 0 ? Math.round((successfulCount / totalCount) * 100) : 0;
 
@@ -175,13 +229,14 @@ export const getPaymentKpis = async (req: Request, res: Response, next: NextFunc
     transactions.forEach((t: any) => {
       const dateStr = t.createdAt.toISOString().split('T')[0];
       if (!chartMap[dateStr]) chartMap[dateStr] = { collected: 0, pending: 0 };
-      if (t.status === 'Paid') chartMap[dateStr]!.collected += t.amount;
-      if (t.status === 'Pending') chartMap[dateStr]!.pending += t.amount;
+      if (isPaid(t.status)) chartMap[dateStr]!.collected += t.amount;
+      if (isPending(t.status)) chartMap[dateStr]!.pending += t.amount;
 
-      if (!gatewayMap[t.gateway]) gatewayMap[t.gateway] = { value: 0, transactions: 0 };
-      if (t.status === 'Paid') {
-        gatewayMap[t.gateway]!.value += t.amount;
-        gatewayMap[t.gateway]!.transactions += 1;
+      const gw = t.gateway || t.method || 'CASH';
+      if (!gatewayMap[gw]) gatewayMap[gw] = { value: 0, transactions: 0 };
+      if (isPaid(t.status)) {
+        gatewayMap[gw]!.value += t.amount;
+        gatewayMap[gw]!.transactions += 1;
       }
     });
 
@@ -198,7 +253,7 @@ export const getPaymentKpis = async (req: Request, res: Response, next: NextFunc
     })).filter(g => g.value > 0);
 
     // Calculate total pending amount
-    const pendingAmount = transactions.filter((t: any) => t.status === "Pending").reduce((acc: number, t: any) => acc + t.amount, 0);
+    const pendingAmount = transactions.filter((t: any) => isPending(t.status)).reduce((acc: number, t: any) => acc + t.amount, 0);
 
     res.status(200).json({
       success: true,

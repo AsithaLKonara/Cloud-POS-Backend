@@ -6,7 +6,8 @@ export const auditLog = (entity: string, action: string) => {
     const forwardedFor = req.headers['x-forwarded-for'];
     const ipAddress = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor as string) || req.ip || '0.0.0.0';
     const userAgent = (req.headers['user-agent'] as string) || 'unknown';
-    const customerId = (req as any).user?.userId || null;
+    const userId = (req as any).user?.userId || (req as any).user?.id || null;
+    const tenantId = (req as any).user?.tenantId || null;
     const newData = req.body;
     
     // We need to wait for the response to finish to capture the ID of a newly created entity,
@@ -17,12 +18,13 @@ export const auditLog = (entity: string, action: string) => {
       // If the request was successful, log it.
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
-          // Attempt to extract entityId from params (for updates/deletes) or response body (if we intercepted it, which is hard in Express without overriding res.send)
+          // Attempt to extract entityId from params (for updates/deletes) or response body
           const entityId = (req.params.id as string) || null;
           
           await prisma.auditLog.create({
             data: {
-              userId: customerId || null,
+              userId: userId || null,
+              tenantId: tenantId || null,
               action,
               entity,
               entityId,

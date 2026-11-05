@@ -3,12 +3,15 @@ jest.mock('../config/prisma', () => ({
   default: {
     order: {
       aggregate: jest.fn(),
+      groupBy: jest.fn(),
     },
     orderItem: {
       findMany: jest.fn(),
     },
     returnRequest: {
       aggregate: jest.fn(),
+      groupBy: jest.fn(),
+      findMany: jest.fn(),
     },
     branchExpense: {
       aggregate: jest.fn(),
@@ -212,8 +215,11 @@ describe('Universal P&L & Financial Accounting (Task 6)', () => {
         _sum: { subtotal: 2000, discount: 0, tax: 0, total: 2000 },
         _count: { id: 20 },
       });
+      mockPrisma.order.groupBy.mockResolvedValue([]);
       mockPrisma.orderItem.findMany.mockResolvedValue([]);
       mockPrisma.returnRequest.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      mockPrisma.returnRequest.groupBy.mockResolvedValue([]);
+      mockPrisma.returnRequest.findMany.mockResolvedValue([]);
       mockPrisma.branchExpense.aggregate.mockResolvedValue({ _sum: { amount: 500 }, _count: { id: 2 } });
       mockPrisma.branchExpense.groupBy.mockResolvedValue([]);
       mockPrisma.inventoryTransaction.findMany.mockResolvedValue([]);
