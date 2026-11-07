@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/prisma";
 import { AppError } from "../middlewares/errorHandler";
+import { requestContext } from "../context/RequestContext";
 
 export const SYSTEM_PERMISSIONS = [
   // Orders & Fulfillment
@@ -250,20 +251,29 @@ export class RoleService {
       const rolePermissionLinks: { roleId: string; permissionId: string }[] = [];
 
       for (const roleDef of rolesConfig) {
-        const role = await prisma.role.upsert({
-          where: { name: roleDef.name },
-          update: {
-            description: roleDef.description,
-            isSystem: roleDef.isSystem,
-            status: "Active",
-          },
-          create: {
-            name: roleDef.name,
-            description: roleDef.description,
-            isSystem: roleDef.isSystem,
-            status: "Active",
-          },
+        let role = await prisma.role.findFirst({
+          where: { name: roleDef.name, isSystem: true, tenantId: null }
         });
+
+        if (role) {
+          role = await prisma.role.update({
+            where: { id: role.id },
+            data: {
+              description: roleDef.description,
+              isSystem: roleDef.isSystem,
+              status: "Active",
+            },
+          });
+        } else {
+          role = await prisma.role.create({
+            data: {
+              name: roleDef.name,
+              description: roleDef.description,
+              isSystem: roleDef.isSystem,
+              status: "Active",
+            },
+          });
+        }
 
         if (roleDef.permissionCodes && roleDef.permissionCodes.length > 0) {
           for (const pCode of roleDef.permissionCodes) {
@@ -286,8 +296,8 @@ export class RoleService {
       }
 
       // 3. Seed default Super Admin user if none exists
-      const superAdminRole = await prisma.role.findUnique({
-        where: { name: "Super Admin" },
+      const superAdminRole = await prisma.role.findFirst({
+        where: { name: "Super Admin", isSystem: true },
       });
 
       if (superAdminRole) {
@@ -322,10 +332,20 @@ export class RoleService {
   }
 
   /**
-   * Get all roles with assigned user count & permissions
+   * Get all roles with assigned user count & permissions (tenant-scoped)
    */
   static async getAllRoles() {
+    const ctx = requestContext.getStore();
+    const where: any = {};
+    if (ctx?.tenantId && !ctx.isPlatformAdmin) {
+      where.OR = [
+        { tenantId: ctx.tenantId },
+        { isSystem: true, tenantId: null }
+      ];
+    }
+
     const roles = await prisma.role.findMany({
+      where,
       include: {
         _count: {
           select: {
@@ -415,8 +435,17 @@ export class RoleService {
     status?: string;
     permissionCodes?: string[];
   }) {
-    const existing = await prisma.role.findUnique({
-      where: { name: data.name.trim() },
+    const ctx = requestContext.getStore();
+    const tenantId = ctx?.tenantId || null;
+
+    const existing = await prisma.role.findFirst({
+      where: {
+        name: data.name.trim(),
+        OR: [
+          ...(tenantId ? [{ tenantId }] : []),
+          { isSystem: true, tenantId: null }
+        ]
+      },
     });
 
     if (existing) {
@@ -425,6 +454,7 @@ export class RoleService {
 
     const role = await prisma.role.create({
       data: {
+        tenantId,
         name: data.name.trim(),
         description: data.description || "",
         status: data.status || "Active",

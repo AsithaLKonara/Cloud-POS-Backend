@@ -188,7 +188,7 @@ export function requirePermission(...requiredPermissions: string[]) {
     }
 
     const userPermissions = req.user.permissions || [];
-    const hasPermission = requiredPermissions.some((reqPerm) =>
+    const hasPermission = userPermissions.includes('*') || requiredPermissions.some((reqPerm) =>
       userPermissions.includes(reqPerm)
     );
 

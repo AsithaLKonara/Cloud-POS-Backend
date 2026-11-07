@@ -61,6 +61,7 @@ model Tenant {
   integrationCredentials TenantIntegrationCredential[]
   apiKeys                TenantApiKey[]
   webhookEndpoints       TenantWebhookEndpoint[]
+  roles                  Role[]
 
   @@index([slug])
   @@index([status])
@@ -246,6 +247,11 @@ model PosSession {
   totalCashSales   Float?      @default(0)
   totalCardSales   Float?      @default(0)
   totalCreditSales Float?      @default(0)
+  totalCashIn      Float?      @default(0)
+  totalCashDrop    Float?      @default(0)
+  denominations    Json?
+  cashMovements    Json?
+  heldCarts        PosHeldCart[]
   closingNotes     String?
   openedAt         DateTime    @default(now())
   closedAt         DateTime?
@@ -437,13 +443,16 @@ model User {
   branch            Branch?            @relation("BranchStaff", fields: [branchId], references: [id])
   userRoles         UserRole[]
   loggedExpenses    BranchExpense[]
+  posPin            String?
 
   @@index([tenantId])
 }
 
 model Role {
   id          String           @id @default(uuid())
-  name        String           @unique
+  tenantId    String?
+  tenant      Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
   description String?
   isSystem    Boolean          @default(false)
   status      String           @default("Active")
@@ -451,6 +460,9 @@ model Role {
   updatedAt   DateTime         @updatedAt
   permissions RolePermission[]
   userRoles   UserRole[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model Permission {
@@ -1149,4 +1161,193 @@ model WebhookDeliveryLog {
 
   @@index([endpointId])
   @@index([status])
+}
+
+model OrderSequence {
+  id         String   @id @default(uuid())
+  tenantId   String
+  prefix     String   @default("ORD")
+  currentVal BigInt   @default(1000)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, prefix])
+  @@index([tenantId])
+}
+
+model ChartOfAccount {
+  id           String             @id @default(uuid())
+  tenantId     String?
+  code         String
+  name         String
+  type         String             // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  currency     String             @default("LKR")
+  isSystem     Boolean            @default(true)
+  isActive     Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  journalLines JournalEntryLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model JournalEntry {
+  id          String             @id @default(uuid())
+  tenantId    String?
+  entryNumber String
+  date        DateTime           @default(now())
+  reference   String?
+  description String
+  status      String             @default("POSTED") // DRAFT, POSTED, VOID
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  lines       JournalEntryLine[]
+
+  @@unique([tenantId, entryNumber])
+  @@index([tenantId])
+  @@index([date])
+}
+
+model JournalEntryLine {
+  id             String         @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  debit          Float          @default(0)
+  credit         Float          @default(0)
+  description    String?
+  journalEntry   JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account        ChartOfAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model VendorBill {
+  id              String    @id @default(uuid())
+  tenantId        String?
+  billNumber      String
+  supplierId      String
+  purchaseOrderId String?
+  branchId        String
+  subtotal        Float
+  tax             Float     @default(0)
+  total           Float
+  amountPaid      Float     @default(0)
+  balanceDue      Float
+  status          String    @default("PENDING") // PENDING, PARTIALLY_PAID, PAID, VOID
+  dueDate         DateTime
+  matchStatus     String    @default("UNMATCHED") // MATCHED, VARIANCE, UNMATCHED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, billNumber])
+  @@index([tenantId])
+  @@index([supplierId])
+  @@index([purchaseOrderId])
+}
+
+model SalesInvoice {
+  id            String    @id @default(uuid())
+  tenantId      String?
+  invoiceNumber String
+  orderId       String?
+  customerId    String
+  branchId      String
+  subtotal      Float
+  tax           Float     @default(0)
+  total         Float
+  amountPaid    Float     @default(0)
+  balanceDue    Float
+  status        String    @default("ISSUED") // DRAFT, ISSUED, PARTIALLY_PAID, PAID, CANCELLED
+  invoiceType   String    @default("COMMERCIAL") // QUOTATION, PROFORMA, COMMERCIAL
+  dueDate       DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([dueDate])
+}
+
+model BillOfMaterials {
+  id              String               @id @default(uuid())
+  tenantId        String?
+  parentVariantId String               @unique
+  name            String
+  description     String?
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  items           BillOfMaterialItem[]
+
+  @@index([tenantId])
+}
+
+model BillOfMaterialItem {
+  id                 String          @id @default(uuid())
+  bomId              String
+  componentVariantId String
+  quantity           Float           @default(1)
+  unit               String?
+  bom                BillOfMaterials @relation(fields: [bomId], references: [id], onDelete: Cascade)
+
+  @@index([bomId])
+  @@index([componentVariantId])
+}
+
+model StocktakeSession {
+  id          String          @id @default(uuid())
+  tenantId    String?
+  branchId    String
+  title       String
+  status      String          @default("DRAFT") // DRAFT, IN_PROGRESS, RECONCILED, CANCELLED
+  createdById String?
+  notes       String?
+  snapshotAt  DateTime        @default(now())
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  items       StocktakeItem[]
+
+  @@index([tenantId])
+  @@index([branchId])
+}
+
+model StocktakeItem {
+  id              String           @id @default(uuid())
+  sessionId       String
+  variantId       String
+  systemQuantity  Int              @default(0)
+  countedQuantity Int?
+  variance        Int?
+  unitCost        Float            @default(0)
+  reconciled      Boolean          @default(false)
+  notes           String?
+  session         StocktakeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([variantId])
+}
+
+model PosHeldCart {
+  id           String      @id @default(uuid())
+  sessionId    String
+  tenantId     String?
+  branchId     String
+  reference    String
+  customerName String?
+  customerId   String?
+  items        Json
+  subtotal     Float       @default(0)
+  discount     Json?
+  notes        String?
+  status       String      @default("HELD") // HELD, RECALLED, DISCARDED
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  session      PosSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([tenantId])
+  @@index([branchId])
 }

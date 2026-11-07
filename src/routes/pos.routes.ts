@@ -7,6 +7,9 @@ const router = Router();
 // Sessions
 router.post('/sessions/open', authenticateJWT, requirePermission("pos:shift_open_close"), posController.openSession);
 router.post('/sessions/close', authenticateJWT, requirePermission("pos:shift_open_close"), posController.closeSession);
+router.post('/sessions/cash-in', authenticateJWT, requirePermission("pos:shift_open_close"), posController.cashIn);
+router.post('/sessions/cash-drop', authenticateJWT, requirePermission("pos:shift_open_close"), posController.cashDrop);
+router.post('/manager-pin/verify', authenticateJWT, posController.verifyManagerPin);
 router.get('/sessions/current', authenticateJWT, posController.getCurrentSession);
 router.get('/sessions/current/expected-closing', authenticateJWT, posController.getExpectedClosing);
 router.get('/sessions/summary', authenticateJWT, posController.getSessionSummary);
@@ -29,6 +32,12 @@ router.patch('/tables/:id/status', authenticateJWT, requirePermission("pos:sales
 // Customer Credit & Garage Debt Settlements
 router.get('/customers/:id/credit', authenticateJWT, posController.getCustomerCreditLedger);
 router.post('/customers/:id/settle-credit', authenticateJWT, requirePermission("pos:sales_mode"), posController.settleCustomerCredit);
+
+// Held / Suspended Carts
+router.post('/carts/hold', authenticateJWT, requirePermission("pos:sales_mode"), posController.holdCart);
+router.get('/carts/held', authenticateJWT, requirePermission("pos:sales_mode"), posController.getHeldCarts);
+router.post('/carts/recall/:id', authenticateJWT, requirePermission("pos:sales_mode"), posController.recallHeldCart);
+router.delete('/carts/held/:id', authenticateJWT, requirePermission("pos:sales_mode"), posController.discardHeldCart);
 
 export default router;
 

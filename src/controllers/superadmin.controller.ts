@@ -251,10 +251,15 @@ export class SuperAdminController {
         targetBranchId = firstBranch?.id || null;
       }
 
-      let adminRole = await (prisma as any).role.findUnique({ where: { name: 'ADMIN' } });
+      let adminRole = await (prisma as any).role.findFirst({
+        where: {
+          name: 'ADMIN',
+          OR: [{ tenantId }, { isSystem: true }],
+        },
+      });
       if (!adminRole) {
         adminRole = await (prisma as any).role.create({
-          data: { name: 'ADMIN', description: 'Tenant Administrator', isSystem: true, status: 'Active' },
+          data: { name: 'ADMIN', description: 'Tenant Administrator', tenantId, isSystem: true, status: 'Active' },
         });
       }
 

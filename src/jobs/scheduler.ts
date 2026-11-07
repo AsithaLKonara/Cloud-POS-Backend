@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { auditDigestService } from '../services/auditDigest.service';
 import { dbBackupService } from './dbBackup';
+import { SubscriptionService } from '../services/subscription.service';
 import { logger } from '../utils/logger';
 
 const PENTEST_REMINDER_MESSAGE = [
@@ -62,5 +63,16 @@ export function registerScheduledJobs() {
     await dbBackupService.runEncryptedBackup();
   }, { timezone: 'UTC' });
 
-  logger.info('[Scheduler] Registered jobs: [weekly-audit-digest @ Monday 08:00], [quarterly-pentest-reminder x4], [daily-db-backup @ 02:00 UTC]');
+  // Daily Automated SaaS Dunning & Grace Period Check at 04:00 UTC
+  cron.schedule('0 4 * * *', async () => {
+    logger.info('[Scheduler] Running daily SaaS dunning & subscription grace period audit...');
+    try {
+      const result = await SubscriptionService.runDunningCheck();
+      logger.info(`[Scheduler] Dunning check completed: ${result.processedCount} tenants checked, ${result.suspended.length} suspended, ${result.inGracePeriod.length} in grace period.`);
+    } catch (err) {
+      logger.error('[Scheduler] SaaS dunning audit failed:', err);
+    }
+  }, { timezone: 'UTC' });
+
+  logger.info('[Scheduler] Registered jobs: [weekly-audit-digest @ Monday 08:00], [quarterly-pentest-reminder x4], [daily-db-backup @ 02:00 UTC], [daily-saas-dunning @ 04:00 UTC]');
 }

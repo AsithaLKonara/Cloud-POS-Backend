@@ -4,6 +4,7 @@ import { productWithVariantsSelect } from '../dto/product.dto';
 import { withCache, invalidateCache } from '../utils/cache.util';
 import { inventoryService } from './inventory.service';
 import { requestContext } from '../context/RequestContext';
+import { HardwareService } from './hardware.service';
 
 export async function signImageUrl(url: string | null): Promise<string | null> {
   // S3 has been removed; media is served locally or statically.
@@ -135,6 +136,17 @@ export class ProductService {
       const searchSku = sku.trim();
       const lowerSku = searchSku.toLowerCase();
       
+      // Check if this is an embedded scale barcode (EAN-13 prefixes 20-29)
+      const scaleInfo = HardwareService.parseEmbeddedScaleBarcode(searchSku);
+      let scaleConditions: any[] = [];
+      if (scaleInfo.isScaleBarcode && scaleInfo.itemCode) {
+        scaleConditions = [
+          { sku: { contains: scaleInfo.itemCode, mode: 'insensitive' } },
+          { barcode: { contains: scaleInfo.itemCode, mode: 'insensitive' } },
+          { barcode: { startsWith: `${scaleInfo.prefix}${scaleInfo.itemCode}`, mode: 'insensitive' } }
+        ];
+      }
+
       const variant = await prisma.productVariant.findFirst({
         where: { 
           OR: [
@@ -143,12 +155,22 @@ export class ProductService {
             { sku: { startsWith: searchSku, mode: 'insensitive' } },
             { barcode: { startsWith: searchSku, mode: 'insensitive' } },
             { id: { startsWith: lowerSku } },
-            { productId: { startsWith: lowerSku } }
+            { productId: { startsWith: lowerSku } },
+            ...scaleConditions
           ] 
         },
         select: { product: { select: productWithVariantsSelect } },
       });
-      return variant && variant.product ? processProductImageUrls(variant.product) : null;
+      if (!variant || !variant.product) return null;
+
+      const processed = await processProductImageUrls(variant.product);
+      if (scaleInfo.isScaleBarcode) {
+        return {
+          ...processed,
+          scaleData: scaleInfo
+        };
+      }
+      return processed;
     });
   }
 

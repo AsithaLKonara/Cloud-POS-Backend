@@ -53,14 +53,44 @@ const TENANT_SCOPED_MODELS = new Set([
   'PurchaseOrder',
   'StockTransfer',
   'InventoryBatch',
+  'Setting',
+  'SystemErrorLog',
+  'TenantIntegrationCredential',
+  'TenantApiKey',
+  'TenantWebhookEndpoint',
+  'OrderSequence',
+  'ChartOfAccount',
+  'JournalEntry',
+  'VendorBill',
+  'SalesInvoice',
+  'BillOfMaterials',
+  'StocktakeSession',
+  'PosHeldCart',
+  'Role',
 ]);
+
+const CHILD_RELATION_SCOPING: Record<string, string> = {
+  ProductVariant: 'product',
+  InventoryItem: 'branch',
+  CustomerCreditLedger: 'customer',
+  PaymentTransaction: 'order',
+  ReturnRequest: 'order',
+  ReturnItem: 'returnRequest',
+  OrderItem: 'order',
+  CartItem: 'cart',
+  LoyaltyAccount: 'customer',
+  JournalEntryLine: 'journalEntry',
+  BillOfMaterialItem: 'bom',
+  StocktakeItem: 'session',
+};
 
 /**
  * Global Prisma Extension for Multi-Tenancy & Row-Level Security (RLS)
  * 
  * Intercepts every query:
- * 1. Sets PostgreSQL session variables (app.current_tenant_id, app.current_user_id, etc.).
- * 2. Automatically injects tenantId into query where clauses and mutations for tenant-scoped models.
+ * 1. Automatically injects tenantId into query where clauses and mutations for tenant-scoped models.
+ * 2. Scopes child models through parent relations to eliminate cross-tenant data leaks.
+ * 3. Bypasses connection-starving interactive transaction wrappers on standard queries.
  */
 const prisma = basePrisma.$extends({
   query: {
@@ -73,13 +103,10 @@ const prisma = basePrisma.$extends({
           return query(args);
         }
 
-        const isAdmin = ctx.isAdmin || false;
         const isPlatformAdmin = ctx.isPlatformAdmin || false;
-        const currentUserId = ctx.userId || '';
-        const currentRole = ctx.role || 'GUEST';
         const currentTenantId = ctx.tenantId || '';
 
-        // Auto-inject tenantId into tenant-scoped models when tenantId is present and not explicitly querying globally
+        // Auto-inject tenantId into tenant-scoped models when tenantId is present and not platform admin
         if (model && TENANT_SCOPED_MODELS.has(model) && currentTenantId && !isPlatformAdmin) {
           args = args || {};
 
@@ -106,7 +133,7 @@ const prisma = basePrisma.$extends({
           }
 
           // Auto-scope updates & deletes
-          if (['updateMany', 'deleteMany'].includes(operation)) {
+          if (['update', 'delete', 'updateMany', 'deleteMany'].includes(operation)) {
             args.where = {
               ...args.where,
               tenantId: currentTenantId,
@@ -114,19 +141,64 @@ const prisma = basePrisma.$extends({
           }
         }
 
-        // Wrap the actual query in a transaction to safely set PostgreSQL session variables
-        return basePrisma.$transaction(async (tx) => {
-          await tx.$executeRaw`
-            SELECT set_config('app.current_tenant_id', ${currentTenantId}, true),
-                   set_config('app.current_user_id', ${currentUserId}, true),
-                   set_config('app.current_role', ${currentRole}, true),
-                   set_config('app.is_admin', ${isAdmin.toString()}, true)
-          `;
-          return query(args);
-        }, {
-          timeout: 20000,
-          maxWait: 10000,
-        });
+        // Auto-scope Cart: allows guest carts (customerId = null) while scoping customer carts to tenant
+        if (model === 'Cart' && currentTenantId && !isPlatformAdmin) {
+          args = args || {};
+          if (['findFirst', 'findMany', 'findUnique', 'count', 'aggregate', 'groupBy'].includes(operation)) {
+            if (args.where?.customerId) {
+              args.where = {
+                ...args.where,
+                customer: { tenantId: currentTenantId },
+              };
+            } else if (!args.where?.id && !args.where?.sessionId) {
+              args.where = {
+                ...args.where,
+                OR: [
+                  { customer: { tenantId: currentTenantId } },
+                  { customerId: null },
+                ],
+              };
+            }
+          }
+        }
+
+        // Auto-scope child models via parent relation to prevent cross-tenant data leaks
+        if (model && CHILD_RELATION_SCOPING[model] && currentTenantId && !isPlatformAdmin) {
+          args = args || {};
+          const relField = CHILD_RELATION_SCOPING[model];
+
+          if (['findFirst', 'findMany', 'findUnique', 'count', 'aggregate', 'groupBy', 'update', 'delete', 'updateMany', 'deleteMany'].includes(operation)) {
+            if (model === 'ReturnItem') {
+              args.where = {
+                ...args.where,
+                returnRequest: {
+                  order: {
+                    tenantId: currentTenantId,
+                  },
+                },
+              };
+            } else if (model === 'CartItem') {
+              args.where = {
+                ...args.where,
+                variant: {
+                  product: {
+                    tenantId: currentTenantId,
+                  },
+                },
+              };
+            } else {
+              args.where = {
+                ...args.where,
+                [relField]: {
+                  tenantId: currentTenantId,
+                },
+              };
+            }
+          }
+        }
+
+        // Direct execution without pool-starving interactive transaction wrapper
+        return query(args);
       },
     },
   },

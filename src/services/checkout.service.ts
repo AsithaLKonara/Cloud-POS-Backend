@@ -8,6 +8,8 @@ import { alertService } from './alert.service';
 import { NotificationService } from './notification.service';
 import { getEffectivePrice } from '../utils/pricing.util';
 import { variantBasicSelect } from '../dto/product.dto';
+import { SequenceService } from './sequence.service';
+import { BillOfMaterialsService } from './bom.service';
 
 export const checkoutService = {
   /**
@@ -223,12 +225,13 @@ export const checkoutService = {
     }
 
     // 4. Create Order & Transactions
-    const orderNumber = `LC-${Date.now().toString().slice(-6)}`;
-    
     const order = await prisma.$transaction(async (tx) => {
+      const orderNumber = await SequenceService.getNextSequence('ORD', (onlineBranch as any)?.tenantId || null, tx);
+
       const createdOrder = await tx.order.create({
         data: {
           orderNumber,
+          tenantId: (onlineBranch as any)?.tenantId || null,
           customerId: customer!.id,
           status: (paymentMethod?.toLowerCase() === 'cod') ? 'PENDING' : 'AWAITING_PAYMENT',
           paymentMethod: paymentMethod || 'COD',
@@ -284,7 +287,7 @@ export const checkoutService = {
         });
       }
 
-      // Deduct Inventory
+      // Deduct Inventory & Recipe / BOM Ingredients
       for (const item of cart.items) {
         await inventoryService.adjustStock({
           variantId: item.variantId,
@@ -294,6 +297,17 @@ export const checkoutService = {
           reason: 'Online Order Checkout',
           reference: createdOrder.id
         }, tx);
+
+        try {
+          await BillOfMaterialsService.deductBomIngredients({
+            parentVariantId: item.variantId,
+            quantitySold: item.quantity,
+            branchId: onlineBranch!.id,
+            reference: orderNumber,
+          }, tx);
+        } catch (bomErr) {
+          // Gracefully continue if no BOM exists
+        }
       }
 
       // Clean up Cart (DB)

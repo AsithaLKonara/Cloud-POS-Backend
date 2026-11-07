@@ -2,6 +2,44 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 
 import { posService } from '../services/pos.service';
+import { SequenceService } from '../services/sequence.service';
+import { BillOfMaterialsService } from '../services/bom.service';
+
+export const cashIn = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id || (req as any).user?.userId;
+    const session = await posService.cashIn({ ...req.body, userId });
+    res.json(session);
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to record cash in' });
+  }
+};
+
+export const cashDrop = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id || (req as any).user?.userId;
+    const session = await posService.cashDrop({ ...req.body, userId });
+    res.json(session);
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to record cash drop' });
+  }
+};
+
+export const verifyManagerPin = async (req: Request, res: Response) => {
+  try {
+    const tenantId = (req as any).tenantId || (req as any).user?.tenantId;
+    const result = await posService.verifyManagerPin({ pin: req.body.pin, tenantId });
+    if (!result.authorized) {
+      return res.status(401).json(result);
+    }
+    res.json(result);
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to verify manager PIN' });
+  }
+};
 
 export const openSession = async (req: Request, res: Response) => {
   try {
@@ -132,7 +170,32 @@ export const processPosOrder = async (req: Request, res: Response) => {
       discount: rawDiscount = 0,
     } = req.body;
     
-    const orderNumber = `POS-${Date.now()}`;
+    // Check Idempotency Key for offline order sync and retries
+    const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body.idempotencyKey;
+    if (idempotencyKey) {
+      const existingKey = await prisma.idempotencyKey.findUnique({ where: { key: idempotencyKey } });
+      if (existingKey) {
+        const existingOrder = await prisma.order.findFirst({
+          where: {
+            metadata: {
+              path: ['idempotencyKey'],
+              equals: idempotencyKey
+            }
+          },
+          include: {
+            items: { include: { variant: { include: { product: true } } } },
+            customer: true,
+            diningTable: true
+          }
+        });
+        if (existingOrder) {
+          return res.status(200).json(existingOrder);
+        }
+      }
+    }
+
+    const effectiveTenantId = (req as any).tenantId || null;
+    const orderNumber = await SequenceService.getNextSequence('POS', effectiveTenantId);
     const discountAmount = Math.max(0, Number(rawDiscount) || 0);
     
     // 1. Validate vouchers and calculate deductions
@@ -285,7 +348,10 @@ export const processPosOrder = async (req: Request, res: Response) => {
         diningOption: diningOption || 'TAKEAWAY',
         tableId: tableId || null,
         splitPayments: splitPayments || null,
-        metadata: metadata || null,
+        metadata: {
+          ...(typeof metadata === 'object' && metadata !== null ? metadata : {}),
+          ...(idempotencyKey ? { idempotencyKey } : {})
+        },
         items: {
           create: orderItems
         }
@@ -406,8 +472,12 @@ export const processPosOrder = async (req: Request, res: Response) => {
         }
       }).catch((err) => console.error('[POS PaymentTransaction Error]:', err));
     }
+
+    if (idempotencyKey) {
+      await prisma.idempotencyKey.create({ data: { key: idempotencyKey } }).catch(() => {});
+    }
     
-    // 4. Deduct Inventory
+    // 4. Deduct Inventory & Recipe / BOM Ingredients
     const { inventoryService } = require('../services/inventory.service');
     for (const item of items) {
       await inventoryService.adjustStock({
@@ -418,6 +488,17 @@ export const processPosOrder = async (req: Request, res: Response) => {
         reason: 'POS Sale',
         reference: order.id
       });
+
+      try {
+        await BillOfMaterialsService.deductBomIngredients({
+          parentVariantId: item.variantId,
+          quantitySold: item.qty,
+          branchId,
+          reference: order.orderNumber,
+        });
+      } catch (bomErr) {
+        // Gracefully continue if no BOM exists or optional
+      }
     }
     
     res.status(201).json(order);
@@ -633,6 +714,66 @@ export const updateTableStatus = async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to update table status' });
+  }
+};
+
+export const holdCart = async (req: Request, res: Response) => {
+  try {
+    const { sessionId, branchId, reference, customerName, customerId, items, subtotal, discount, notes } = req.body;
+    if (!sessionId || !branchId || !items || !Array.isArray(items)) {
+      return res.status(400).json({ error: 'sessionId, branchId, and items are required' });
+    }
+    const cart = await posService.holdCart({
+      sessionId,
+      branchId,
+      reference,
+      customerName,
+      customerId,
+      items,
+      subtotal,
+      discount,
+      notes
+    });
+    res.status(201).json(cart);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to hold cart' });
+  }
+};
+
+export const getHeldCarts = async (req: Request, res: Response) => {
+  try {
+    const { sessionId } = req.query;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    const carts = await posService.getHeldCarts(String(sessionId));
+    res.json(carts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to fetch held carts' });
+  }
+};
+
+export const recallHeldCart = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const cart = await posService.recallHeldCart(id);
+    res.json(cart);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to recall held cart' });
+  }
+};
+
+export const discardHeldCart = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const cart = await posService.discardHeldCart(id);
+    res.json(cart);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to discard held cart' });
   }
 };
 

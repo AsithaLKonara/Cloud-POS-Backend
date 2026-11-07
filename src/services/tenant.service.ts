@@ -275,14 +275,20 @@ export class TenantService {
       });
 
       // 3. Ensure 'ADMIN' role exists
-      let adminRole = await tx.role.findUnique({
-        where: { name: 'ADMIN' },
-      });
+      let adminRole = typeof tx.role.findFirst === 'function'
+        ? await tx.role.findFirst({
+            where: {
+              name: 'ADMIN',
+              OR: [{ tenantId: newTenant.id }, { isSystem: true }],
+            },
+          })
+        : await (tx.role.findUnique ? tx.role.findUnique({ where: { name: 'ADMIN' } as any }) : null);
       if (!adminRole) {
         adminRole = await tx.role.create({
           data: {
             name: 'ADMIN',
             description: 'Tenant Administrator',
+            tenantId: newTenant.id,
             isSystem: true,
             status: 'Active',
           },

@@ -132,4 +132,56 @@ export class HardwareService {
       '',
     ].join('\r\n');
   }
+
+  /**
+   * Parses EAN-13 in-store scale barcodes (prefixes 20-29).
+   * Commonly used for produce, meats, bulk grains, and deli items.
+   * Format:
+   *  - Prefixes 20, 21, 28: Weight-embedded (20AAAAAWWWWW C) where WWWWW = weight in grams (e.g. 01450 = 1.450 kg)
+   *  - Prefixes 22, 23: Price-embedded (22AAAAAPPPPP C) where PPPPP = price in cents/cents-equivalent
+   */
+  static parseEmbeddedScaleBarcode(barcode: string): {
+    isScaleBarcode: boolean;
+    prefix?: string;
+    itemCode?: string;
+    weightKg?: number;
+    price?: number;
+  } {
+    const clean = barcode.trim();
+    if (clean.length !== 12 && clean.length !== 13) {
+      return { isScaleBarcode: false };
+    }
+
+    const prefix = clean.substring(0, 2);
+    const prefixNum = parseInt(prefix, 10);
+    if (isNaN(prefixNum) || prefixNum < 20 || prefixNum > 29) {
+      return { isScaleBarcode: false };
+    }
+
+    const itemCode = clean.substring(2, 7);
+    const valuePart = clean.substring(7, 12);
+    const numericValue = parseInt(valuePart, 10);
+
+    if (isNaN(numericValue)) {
+      return { isScaleBarcode: false };
+    }
+
+    if ([20, 21, 24, 25, 28].includes(prefixNum)) {
+      // Weight in kilograms (value in grams / 1000)
+      return {
+        isScaleBarcode: true,
+        prefix,
+        itemCode,
+        weightKg: Math.round((numericValue / 1000) * 1000) / 1000,
+      };
+    } else {
+      // Price-embedded
+      return {
+        isScaleBarcode: true,
+        prefix,
+        itemCode,
+        price: Math.round((numericValue / 100) * 100) / 100,
+      };
+    }
+  }
 }

@@ -18,11 +18,13 @@ import {
 } from '../controllers/inventory.controller';
 import { authenticateJWT, optionalAuth, requirePermission } from '../middlewares/auth.middleware';
 import { auditLog } from '../middlewares/audit.middleware';
+import { requirePlanFeature } from '../middlewares/featureGuard.middleware';
+import { enforceQuota } from '../middlewares/quota.middleware';
 
 const router = Router();
 
 router.get('/branches', optionalAuth, getBranches);
-router.post('/branches', authenticateJWT, requirePermission("branches:create"), auditLog('Branch', 'CREATE'), createBranch);
+router.post('/branches', authenticateJWT, requirePermission("branches:create"), enforceQuota('BRANCH'), auditLog('Branch', 'CREATE'), createBranch);
 router.put('/branches/:id', authenticateJWT, requirePermission("branches:edit"), auditLog('Branch', 'UPDATE'), updateBranch);
 router.delete('/branches/:id', authenticateJWT, requirePermission("branches:delete"), auditLog('Branch', 'DELETE'), deleteBranch);
 
@@ -33,8 +35,8 @@ router.post('/adjust', authenticateJWT, requirePermission("inventory:adjust_stoc
 router.post('/reserve', reserveStock);
 router.post('/release', releaseStock);
 router.get('/transfers', authenticateJWT, requirePermission("inventory:view_stock"), getTransfers);
-router.post('/transfers', authenticateJWT, requirePermission("inventory:stock_transfers"), auditLog('Transfer', 'CREATE'), createTransfer);
-router.put('/transfers/:id/status', authenticateJWT, requirePermission("inventory:stock_transfers"), auditLog('Transfer', 'UPDATE'), updateTransferStatus);
+router.post('/transfers', authenticateJWT, requirePermission("inventory:stock_transfers"), requirePlanFeature('INTER_BRANCH_TRANSFER'), auditLog('Transfer', 'CREATE'), createTransfer);
+router.put('/transfers/:id/status', authenticateJWT, requirePermission("inventory:stock_transfers"), requirePlanFeature('INTER_BRANCH_TRANSFER'), auditLog('Transfer', 'UPDATE'), updateTransferStatus);
 
 // Fardar Shipping integration
 router.post('/shipping/create', authenticateJWT, requirePermission("shipping:dispatch_fardar"), auditLog('Shipment', 'CREATE'), createShipment);

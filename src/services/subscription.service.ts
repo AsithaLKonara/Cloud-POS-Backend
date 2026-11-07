@@ -332,4 +332,54 @@ export class SubscriptionService {
       latestInvoice: settings.invoices?.[0] || null,
     };
   }
+
+  /**
+   * Automated Dunning Engine:
+   * Checks for overdue subscriptions and handles grace periods and auto-suspensions.
+   */
+  static async runDunningCheck() {
+    const tenants = await (prisma as any).tenant.findMany({
+      where: {
+        status: { in: ['ACTIVE', 'TRIAL'] }
+      }
+    });
+
+    const now = new Date().getTime();
+    const GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000; // 3-day grace period
+
+    const suspended: string[] = [];
+    const inGracePeriod: string[] = [];
+
+    for (const tenant of tenants) {
+      const settings = (tenant.settings as Record<string, any>) || {};
+      let expirationTime: number | null = null;
+
+      if (tenant.status === 'TRIAL' && settings.trialEndsAt) {
+        expirationTime = new Date(settings.trialEndsAt).getTime();
+      } else if (settings.subscription?.currentPeriodEnd) {
+        expirationTime = new Date(settings.subscription.currentPeriodEnd).getTime();
+      }
+
+      if (expirationTime && expirationTime < now) {
+        const overdueMs = now - expirationTime;
+        if (overdueMs > GRACE_PERIOD_MS) {
+          // Suspend tenant
+          await (prisma as any).tenant.update({
+            where: { id: tenant.id },
+            data: { status: 'SUSPENDED' }
+          });
+          logger.warn(`Tenant [${tenant.name}] suspended due to overdue subscription payment (${Math.round(overdueMs / 86400000)} days overdue).`);
+          suspended.push(tenant.id);
+        } else {
+          inGracePeriod.push(tenant.id);
+        }
+      }
+    }
+
+    return {
+      processedCount: tenants.length,
+      suspended,
+      inGracePeriod
+    };
+  }
 }

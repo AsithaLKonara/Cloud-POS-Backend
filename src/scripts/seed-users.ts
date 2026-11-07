@@ -15,7 +15,7 @@ async function main() {
   const roles: Record<string, any> = {};
 
   for (const r of rolesData) {
-    let role = await prisma.role.findUnique({ where: { name: r.name } });
+    let role = await prisma.role.findFirst({ where: { name: r.name } });
     if (!role) {
       role = await prisma.role.create({ data: r });
       console.log(`Created role: ${r.name}`);

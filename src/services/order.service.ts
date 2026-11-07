@@ -1,8 +1,11 @@
 import prisma from '../config/prisma';
+import { requestContext } from '../context/RequestContext';
+import { SequenceService } from './sequence.service';
 import { FardarService } from './fardar.service';
 import { inventoryService } from './inventory.service';
 import { loyaltyService } from './loyalty.service';
 import { NotificationService } from './notification.service';
+import { BillOfMaterialsService } from './bom.service';
 
 export interface QuickDispatchPayload {
   customer: {
@@ -138,11 +141,22 @@ export const orderService = {
           quantity: item.quantity,
           reason: 'Quick Dispatch Manual Order'
         }, tx);
+
+        try {
+          await BillOfMaterialsService.deductBomIngredients({
+            parentVariantId: item.variantId,
+            quantitySold: item.quantity,
+            branchId: data.branchId,
+            reference: 'Quick Dispatch Order',
+          }, tx);
+        } catch (bomErr) {
+          // Gracefully continue
+        }
       }
 
-      // 4. Generate Order Number (e.g. QD-12345)
-      const orderCount = await tx.order.count();
-      const orderNumber = `QD-${10000 + orderCount + 1}`;
+      // 4. Generate Order Number Atomically (e.g. QD-1001)
+      const ctxTenantId = requestContext.getStore()?.tenantId || null;
+      const orderNumber = await SequenceService.getNextSequence('QD', ctxTenantId, tx);
 
       // 4.5 Server-side Price Recalculation
       let subtotal = 0;
@@ -501,8 +515,14 @@ export const orderService = {
   },
 
   async getOrderConfirmation(orderNumber: string) {
+    const ctx = requestContext.getStore();
+    const where: any = { orderNumber };
+    if (ctx?.tenantId && !ctx.isPlatformAdmin) {
+      where.tenantId = ctx.tenantId;
+    }
+
     const order = await prisma.order.findFirst({
-      where: { orderNumber },
+      where,
       include: {
         items: {
           include: {
@@ -529,8 +549,14 @@ export const orderService = {
   },
 
   async trackOrder(orderNumber: string, phone: string) {
+    const ctx = requestContext.getStore();
+    const where: any = { orderNumber };
+    if (ctx?.tenantId && !ctx.isPlatformAdmin) {
+      where.tenantId = ctx.tenantId;
+    }
+
     const order = await prisma.order.findFirst({
-      where: { orderNumber },
+      where,
       include: { customer: true, items: { include: { variant: { include: { product: true } } } } }
     });
 

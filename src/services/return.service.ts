@@ -1,10 +1,17 @@
 import prisma from '../config/prisma';
+import { requestContext } from '../context/RequestContext';
 import { inventoryService } from './inventory.service';
 
 export const returnService = {
   verifyOrderForReturn: async (orderNumber: string, email: string) => {
+    const ctx = requestContext.getStore();
+    const where: any = { orderNumber };
+    if (ctx?.tenantId && !ctx.isPlatformAdmin) {
+      where.tenantId = ctx.tenantId;
+    }
+
     const order = await prisma.order.findFirst({
-      where: { orderNumber },
+      where,
       include: {
         customer: true,
         items: {
