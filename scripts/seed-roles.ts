@@ -169,6 +169,18 @@ async function main() {
       permissions: MODULE_GROUPS.flatMap(g => g.modules.map(m => m.code))
     },
     {
+      name: "ADMIN",
+      description: "Tenant Owner & Store Administrator. Full operational access across the tenant.",
+      isSystem: true,
+      permissions: MODULE_GROUPS.flatMap(g => g.modules.map(m => m.code))
+    },
+    {
+      name: "Tenant Admin",
+      description: "Full Tenant Administrator access across all operational modules.",
+      isSystem: true,
+      permissions: MODULE_GROUPS.flatMap(g => g.modules.map(m => m.code))
+    },
+    {
       name: "Branch Admin",
       description: "Manages a specific branch operations, staff, and inventory.",
       isSystem: true,

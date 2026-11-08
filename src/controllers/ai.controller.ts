@@ -118,3 +118,82 @@ export const deleteTenantKnowledge = async (req: Request, res: Response) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+export const getAiConfig = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'Tenant context required' });
+    }
+
+    const config = await AiRagService.getTenantAiConfig(tenantId);
+    // Mask API key for UI display
+    const maskedKey = config.apiKey
+      ? config.apiKey.slice(0, 4) + '••••••••••••' + config.apiKey.slice(-4)
+      : '';
+
+    res.json({
+      success: true,
+      data: {
+        enabled: config.enabled,
+        model: config.model || 'gemini-1.5-flash',
+        apiKey: maskedKey,
+        isConfigured: !!config.apiKey || !!process.env.GEMINI_API_KEY,
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const updateAiConfig = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'Tenant context required' });
+    }
+
+    const { enabled, apiKey, model } = req.body;
+    const result = await AiRagService.saveTenantAiConfig(tenantId, {
+      enabled,
+      apiKey,
+      model
+    });
+
+    res.json({
+      success: true,
+      message: 'AI Copilot integration updated successfully',
+      data: result
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+export const testAiConnection = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req);
+    const { apiKey, model } = req.body;
+
+    let keyToTest = apiKey;
+    if (!keyToTest || keyToTest.includes('••••')) {
+      if (tenantId) {
+        const stored = await AiRagService.getTenantAiConfig(tenantId);
+        keyToTest = stored.apiKey || process.env.GEMINI_API_KEY;
+      } else {
+        keyToTest = process.env.GEMINI_API_KEY;
+      }
+    }
+
+    const result = await AiRagService.testGeminiConnection(keyToTest, model || 'gemini-1.5-flash');
+    res.json({
+      success: result.success,
+      data: result
+    });
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err.message || 'Connection test failed'
+    });
+  }
+};

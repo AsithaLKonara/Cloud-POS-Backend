@@ -464,7 +464,47 @@ Under XONIT's SaaS multi-tenant security architecture:
     // 5. Retrieve live tenant operational context
     const liveMetrics = await this.fetchLiveTenantMetrics(tenantId);
 
-    // 6. Check for external LLM API (OpenAI) if configured
+    // 6. Check for Google Gemini API (Tenant-configured in DB or process.env.GEMINI_API_KEY)
+    let geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '';
+    let geminiModel = 'gemini-1.5-flash';
+    let geminiEnabled = !!geminiApiKey;
+
+    if (tenantId) {
+      try {
+        const tenantAiConfig = await this.getTenantAiConfig(tenantId);
+        if (tenantAiConfig && tenantAiConfig.enabled) {
+          if (tenantAiConfig.apiKey) {
+            geminiApiKey = tenantAiConfig.apiKey;
+          }
+          if (tenantAiConfig.model) {
+            geminiModel = tenantAiConfig.model;
+          }
+          geminiEnabled = !!geminiApiKey;
+        } else if (tenantAiConfig && !tenantAiConfig.enabled) {
+          geminiEnabled = false;
+        }
+      } catch (e) {
+        // Fallback to environment variable
+      }
+    }
+
+    if (geminiEnabled && geminiApiKey) {
+      try {
+        const response = await this.callGeminiLlm({
+          cleanQuery,
+          retrieved,
+          liveMetrics,
+          history: safeHistory,
+          apiKey: geminiApiKey,
+          model: geminiModel
+        });
+        if (response) return response;
+      } catch (err: any) {
+        console.warn('Google Gemini API call failed or timed out, falling back:', err?.response?.data || err.message);
+      }
+    }
+
+    // 7. Check for external LLM API (OpenAI) if configured
     if (process.env.OPENAI_API_KEY) {
       try {
         const response = await this.callOpenAiLlm({
@@ -479,8 +519,93 @@ Under XONIT's SaaS multi-tenant security architecture:
       }
     }
 
-    // 7. Built-in contextual AI Expert Synthesizer (Local RAG execution)
+    // 8. Built-in contextual AI Expert Synthesizer (Local RAG execution)
     return this.synthesizeLocalResponse(cleanQuery, retrieved, liveMetrics);
+  }
+
+  /**
+   * Calls Google Gemini LLM with RAG grounding and tenant boundary prompts
+   */
+  private static async callGeminiLlm(params: {
+    cleanQuery: string;
+    retrieved: RagRetrievalResult[];
+    liveMetrics: LiveTenantMetrics | null;
+    history: ChatMessage[];
+    apiKey: string;
+    model?: string;
+  }) {
+    const { cleanQuery, retrieved, liveMetrics, history, apiKey, model = 'gemini-1.5-flash' } = params;
+    const axios = (await import('axios')).default;
+
+    const systemPrompt = `You are the XONIT AI Copilot & Business Assistant for a SaaS multi-tenant POS and ERP platform.
+CRITICAL TENANT ISOLATION RULES:
+- You are currently serving tenant: "${liveMetrics?.tenantName || 'Standard Store'}" (Currency: ${liveMetrics?.currency || 'LKR'}).
+- You must strictly only answer questions regarding this tenant's operations, general platform features, POS usage, inventory management, AP/AR aging, General Ledger, and stocktaking.
+- NEVER disclose or fabricate information about any other tenant or organization.
+- Answer accurately, politely, concisely, and format your response in crisp Markdown with bullet points and bold headers.
+
+CURRENT LIVE TENANT METRICS:
+${liveMetrics ? JSON.stringify(liveMetrics, null, 2) : 'No live tenant metrics available.'}
+
+RETRIEVED KNOWLEDGE BASE EXCERPTS:
+${retrieved.map((r, i) => `[Source ${i + 1}: ${r.document.title}]\n${r.document.content}`).join('\n\n')}
+`;
+
+    // Map history to Google Gemini format (roles: 'user' and 'model')
+    const contents = [
+      ...history.slice(-4).map(h => ({
+        role: h.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: String(h.content).slice(0, 2000) }]
+      })),
+      {
+        role: 'user',
+        parts: [{ text: cleanQuery }]
+      }
+    ];
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const res = await axios.post(
+      url,
+      {
+        system_instruction: {
+          parts: [{ text: systemPrompt }]
+        },
+        contents,
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1000
+        }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 15000
+      }
+    );
+
+    const candidate = res.data?.candidates?.[0];
+    const answer = candidate?.content?.parts?.[0]?.text;
+    if (!answer) return null;
+
+    const sources = retrieved.map(r => ({
+      title: r.document.title,
+      category: r.document.category,
+      snippet: r.snippet
+    }));
+
+    if (liveMetrics) {
+      sources.unshift({
+        title: `Live Tenant Ledger & Metrics (${liveMetrics.tenantName})`,
+        category: 'ERP_ACCOUNTING',
+        snippet: `Real-time data snapshot for ${liveMetrics.tenantName}`
+      });
+    }
+
+    return {
+      answer,
+      sources,
+      suggestedQuestions: this.generateSuggestedFollowups(cleanQuery, liveMetrics)
+    };
   }
 
   /**
@@ -818,5 +943,110 @@ What would you like to explore or analyze today?`;
       this.persistTenantKnowledge(tenantId).catch(() => {});
     }
     return wasDeleted;
+  }
+
+  /**
+   * Retrieves tenant AI Copilot configuration from Setting table
+   */
+  static async getTenantAiConfig(tenantId: string): Promise<{ enabled: boolean; apiKey?: string; model?: string }> {
+    try {
+      const setting = await (prisma as any).setting.findUnique({
+        where: { key: `ai_gemini_config:${tenantId}` }
+      });
+      if (setting && setting.value) {
+        return JSON.parse(setting.value);
+      }
+    } catch {
+      // Fallback
+    }
+    return {
+      enabled: false,
+      model: 'gemini-1.5-flash',
+    };
+  }
+
+  /**
+   * Persists tenant AI Copilot configuration to Setting table
+   */
+  static async saveTenantAiConfig(tenantId: string, config: { enabled: boolean; apiKey?: string; model?: string }) {
+    const existing = await this.getTenantAiConfig(tenantId);
+    const finalApiKey = config.apiKey && !config.apiKey.includes('••••')
+      ? config.apiKey.trim()
+      : existing.apiKey || '';
+
+    const payload = {
+      enabled: !!config.enabled,
+      apiKey: finalApiKey,
+      model: config.model || 'gemini-1.5-flash',
+    };
+
+    await (prisma as any).setting.upsert({
+      where: { key: `ai_gemini_config:${tenantId}` },
+      update: {
+        value: JSON.stringify(payload),
+        group: 'ai_copilot',
+        updatedAt: new Date()
+      },
+      create: {
+        key: `ai_gemini_config:${tenantId}`,
+        value: JSON.stringify(payload),
+        group: 'ai_copilot',
+        description: `Google Gemini AI Copilot credentials for tenant ${tenantId}`,
+        isPublic: false
+      }
+    });
+
+    return {
+      enabled: payload.enabled,
+      model: payload.model,
+      hasApiKey: !!payload.apiKey,
+    };
+  }
+
+  /**
+   * Tests connection with Google Gemini API directly
+   */
+  static async testGeminiConnection(apiKey?: string, model = 'gemini-1.5-flash'): Promise<{
+    success: boolean;
+    latencyMs: number;
+    message: string;
+  }> {
+    const key = apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
+    if (!key) {
+      throw new Error('Google Gemini API Key is required to test connection.');
+    }
+
+    const axios = (await import('axios')).default;
+    const start = Date.now();
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const res = await axios.post(
+        url,
+        {
+          contents: [{ role: 'user', parts: [{ text: 'Respond with "PONG"' }] }],
+          generationConfig: { maxOutputTokens: 10 }
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        }
+      );
+
+      const latencyMs = Date.now() - start;
+      const reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+      return {
+        success: true,
+        latencyMs,
+        message: `Successfully connected to Google Gemini (${model}). Latency: ${latencyMs}ms.`
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - start;
+      const apiErr = err.response?.data?.error?.message || err.message;
+      return {
+        success: false,
+        latencyMs,
+        message: `Google Gemini API error: ${apiErr}`
+      };
+    }
   }
 }
