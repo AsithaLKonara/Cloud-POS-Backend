@@ -7,7 +7,17 @@ import { BillOfMaterialsService } from '../services/bom.service';
 import { StocktakingService } from '../services/stocktaking.service';
 
 function getTenantId(req: Request): string | undefined {
-  return (req as any).tenantId || (req as any).user?.tenantId;
+  const explicit =
+    (req as any).tenantId ||
+    (req as any).user?.tenantId ||
+    (req.headers['x-tenant-id'] as string) ||
+    (req.body?.tenantId as string) ||
+    (req.query?.tenantId as string);
+
+  if (explicit && typeof explicit === 'string' && explicit.trim()) {
+    return explicit.trim();
+  }
+  return undefined;
 }
 
 // ----------------- General Ledger (GL) -----------------

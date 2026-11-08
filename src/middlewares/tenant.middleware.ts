@@ -96,6 +96,20 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
       resolvedTenantSlug = user.tenantSlug || null;
     }
 
+    if (!resolvedTenantId) {
+      const explicitParam = (req.query?.tenantId as string) || (req.body?.tenantId as string);
+      if (explicitParam && typeof explicitParam === 'string' && explicitParam.length > 5) {
+        const tenant = await (prisma as any).tenant.findUnique({
+          where: { id: explicitParam.trim() },
+          select: { id: true, slug: true, status: true },
+        });
+        if (tenant && (tenant.status === 'ACTIVE' || isPlatformAdmin)) {
+          resolvedTenantId = tenant.id;
+          resolvedTenantSlug = tenant.slug;
+        }
+      }
+    }
+
     // Security Guard: Non-platform admins cannot access a different tenant than their own assigned tenant
     if (user?.tenantId && resolvedTenantId && user.tenantId !== resolvedTenantId && !isPlatformAdmin) {
       res.status(403).json({

@@ -466,7 +466,7 @@ Under XONIT's SaaS multi-tenant security architecture:
 
     // 6. Check for Google Gemini API (Tenant-configured in DB or process.env.GEMINI_API_KEY)
     let geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '';
-    let geminiModel = 'gemini-1.5-flash';
+    let geminiModel = 'auto';
     let geminiEnabled = !!geminiApiKey;
 
     if (tenantId) {
@@ -496,7 +496,8 @@ Under XONIT's SaaS multi-tenant security architecture:
           liveMetrics,
           history: safeHistory,
           apiKey: geminiApiKey,
-          model: geminiModel
+          model: geminiModel || 'auto',
+          tenantId
         });
         if (response) return response;
       } catch (err: any) {
@@ -533,9 +534,12 @@ Under XONIT's SaaS multi-tenant security architecture:
     history: ChatMessage[];
     apiKey: string;
     model?: string;
+    tenantId?: string | null;
   }) {
-    const { cleanQuery, retrieved, liveMetrics, history, apiKey, model = 'gemini-1.5-flash' } = params;
+    const { cleanQuery, retrieved, liveMetrics, history, apiKey, model, tenantId } = params;
     const axios = (await import('axios')).default;
+
+    let activeModel = await this.resolveBestGeminiModel(apiKey, model);
 
     const systemPrompt = `You are the XONIT AI Copilot & Business Assistant for a SaaS multi-tenant POS and ERP platform.
 CRITICAL TENANT ISOLATION RULES:
@@ -563,28 +567,66 @@ ${retrieved.map((r, i) => `[Source ${i + 1}: ${r.document.title}]\n${r.document.
       }
     ];
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const candidatesToTry = [
+      activeModel,
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash'
+    ].filter((v, i, a) => a.indexOf(v) === i);
 
-    const res = await axios.post(
-      url,
-      {
-        system_instruction: {
-          parts: [{ text: systemPrompt }]
-        },
-        contents,
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1000
+    let res: any;
+    let successfulModel = activeModel;
+    let lastError: any = null;
+
+    for (const candidate of candidatesToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent?key=${apiKey}`;
+        res = await axios.post(
+          url,
+          {
+            system_instruction: {
+              parts: [{ text: systemPrompt }]
+            },
+            contents,
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 1000
+            }
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000
+          }
+        );
+        successfulModel = candidate;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err.response?.data?.error?.message || err.message || '';
+        // Self-healing: if Google suggests a newer model (e.g. models/gemini-3.8-flash)
+        const match = errMsg.match(/use models\/([a-zA-Z0-9\.\-_]+)/i);
+        if (match && match[1] && !candidatesToTry.includes(match[1])) {
+          candidatesToTry.push(match[1]);
         }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000
       }
-    );
+    }
+
+    if (!res) {
+      if (lastError) throw lastError;
+      return null;
+    }
+
+    if (successfulModel !== activeModel && tenantId) {
+      console.info(`[Google Gemini] Auto-switched to working model: ${successfulModel}`);
+      this.saveTenantAiConfig(tenantId, { enabled: true, model: successfulModel }).catch(() => {});
+    }
 
     const candidate = res.data?.candidates?.[0];
-    const answer = candidate?.content?.parts?.[0]?.text;
+    const answerPart = candidate?.content?.parts?.find((p: any) => p && typeof p.text === 'string' && !p.thought)
+      || candidate?.content?.parts?.find((p: any) => p && typeof p.text === 'string')
+      || candidate?.content?.parts?.[0];
+    const answer = answerPart?.text;
     if (!answer) return null;
 
     const sources = retrieved.map(r => ({
@@ -961,7 +1003,7 @@ What would you like to explore or analyze today?`;
     }
     return {
       enabled: false,
-      model: 'gemini-1.5-flash',
+      model: 'auto',
     };
   }
 
@@ -977,7 +1019,7 @@ What would you like to explore or analyze today?`;
     const payload = {
       enabled: !!config.enabled,
       apiKey: finalApiKey,
-      model: config.model || 'gemini-1.5-flash',
+      model: config.model || 'auto',
     };
 
     await (prisma as any).setting.upsert({
@@ -1004,11 +1046,92 @@ What would you like to explore or analyze today?`;
   }
 
   /**
-   * Tests connection with Google Gemini API directly
+   * Fetches available Gemini models supported by the provided API key directly from Google
    */
-  static async testGeminiConnection(apiKey?: string, model = 'gemini-1.5-flash'): Promise<{
+  static async fetchAvailableGeminiModels(apiKey: string): Promise<Array<{ id: string; displayName: string; description: string }>> {
+    const axios = (await import('axios')).default;
+    const res = await axios.get(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
+      { timeout: 8000 }
+    );
+
+    const rawModels: any[] = res.data?.models || [];
+    const disallowedKeywords = ['omni', 'tts', 'image', 'transcribe', 'clip', 'computer-use', 'robotics', 'deep-research', 'argon'];
+
+    return rawModels
+      .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+      .map(m => {
+        const id = String(m.name || '').replace(/^models\//, '');
+        return {
+          id,
+          displayName: m.displayName || id,
+          description: m.description || '',
+        };
+      })
+      .filter(m => !disallowedKeywords.some(kw => m.id.toLowerCase().includes(kw)));
+  }
+
+  /**
+   * Automatically resolves the best Gemini model available for the given key.
+   * Prioritizes modern Flash models with active quota (e.g. gemini-3.5-flash, gemini-3.5-flash-lite).
+   */
+  static async resolveBestGeminiModel(apiKey: string, requestedModel?: string): Promise<string> {
+    if (requestedModel && requestedModel !== 'auto' && !requestedModel.includes('gemini-2.0-flash') && !requestedModel.includes('omni')) {
+      return requestedModel;
+    }
+
+    try {
+      const models = await this.fetchAvailableGeminiModels(apiKey);
+      const availableIds = new Set(models.map(m => m.id));
+
+      // Preferred stable generation models with active quotas on Free & Paid tiers
+      const preferredPriorities = [
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-3.8-flash',
+        'gemini-2.5-flash',
+        'gemini-1.5-flash',
+      ];
+
+      for (const candidate of preferredPriorities) {
+        if (availableIds.has(candidate)) {
+          return candidate;
+        }
+      }
+
+      // Find other flash models
+      const flashModels = models.filter(m => m.id.toLowerCase().includes('flash'));
+      if (flashModels.length > 0 && flashModels[0]?.id) {
+        flashModels.sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
+        return flashModels[0]?.id || 'gemini-3.5-flash';
+      }
+
+      // Find pro models
+      const proModels = models.filter(m => m.id.toLowerCase().includes('pro'));
+      if (proModels.length > 0 && proModels[0]?.id) {
+        proModels.sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
+        return proModels[0]?.id || 'gemini-3.5-flash';
+      }
+
+      if (models[0]?.id) {
+        return models[0].id;
+      }
+    } catch (err: any) {
+      console.warn('Could not auto-fetch Gemini models list:', err.message);
+    }
+
+    return 'gemini-3.5-flash';
+  }
+
+  /**
+   * Tests connection with Google Gemini API directly, auto-selecting optimal model
+   */
+  static async testGeminiConnection(apiKey?: string, model = 'auto'): Promise<{
     success: boolean;
     latencyMs: number;
+    detectedModel: string;
+    availableModels: Array<{ id: string; displayName: string }>;
     message: string;
   }> {
     const key = apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
@@ -1018,35 +1141,70 @@ What would you like to explore or analyze today?`;
 
     const axios = (await import('axios')).default;
     const start = Date.now();
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      const res = await axios.post(
-        url,
-        {
-          contents: [{ role: 'user', parts: [{ text: 'Respond with "PONG"' }] }],
-          generationConfig: { maxOutputTokens: 10 }
-        },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
-        }
-      );
 
-      const latencyMs = Date.now() - start;
-      const reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-      return {
-        success: true,
-        latencyMs,
-        message: `Successfully connected to Google Gemini (${model}). Latency: ${latencyMs}ms.`
-      };
-    } catch (err: any) {
-      const latencyMs = Date.now() - start;
-      const apiErr = err.response?.data?.error?.message || err.message;
-      return {
-        success: false,
-        latencyMs,
-        message: `Google Gemini API error: ${apiErr}`
-      };
+    let availableModels: Array<{ id: string; displayName: string }> = [];
+    try {
+      const fetched = await this.fetchAvailableGeminiModels(key);
+      availableModels = fetched.map(m => ({ id: m.id, displayName: `${m.displayName} (${m.id})` }));
+    } catch (e: any) {
+      console.warn('Could not fetch models list directly during test:', e.message);
     }
+
+    let activeModel = await this.resolveBestGeminiModel(key, model);
+
+    const candidatesToTry = [
+      activeModel,
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash'
+    ].filter((v, i, a) => a.indexOf(v) === i);
+
+    let lastError: any = null;
+
+    for (const candidate of candidatesToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent?key=${key}`;
+        const res = await axios.post(
+          url,
+          {
+            contents: [{ role: 'user', parts: [{ text: 'Respond with "PONG"' }] }],
+            generationConfig: { maxOutputTokens: 150 }
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000
+          }
+        );
+
+        activeModel = candidate;
+        const latencyMs = Date.now() - start;
+        return {
+          success: true,
+          latencyMs,
+          detectedModel: activeModel,
+          availableModels,
+          message: `Successfully connected to Google Gemini! Auto-selected model: ${activeModel} (Latency: ${latencyMs}ms).`
+        };
+      } catch (postErr: any) {
+        lastError = postErr;
+        const apiErr = postErr.response?.data?.error?.message || postErr.message || '';
+        // If Google provides a suggested model (e.g. models/gemini-3.8-flash or models/gemini-3.5-flash)
+        const match = apiErr.match(/use models\/([a-zA-Z0-9\.\-_]+)/i);
+        if (match && match[1] && !candidatesToTry.includes(match[1])) {
+          candidatesToTry.push(match[1]);
+        }
+      }
+    }
+
+    const latencyMs = Date.now() - start;
+    const apiErr = lastError?.response?.data?.error?.message || lastError?.message || 'Connection failed';
+    return {
+      success: false,
+      latencyMs,
+      detectedModel: activeModel,
+      availableModels,
+      message: `Google Gemini API error: ${apiErr}`
+    };
   }
 }

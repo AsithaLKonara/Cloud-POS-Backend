@@ -16,6 +16,7 @@ router.delete('/knowledge/:id', authenticateJWT, aiController.deleteTenantKnowle
 // AI Integration & Gemini API Configuration
 router.get('/config', authenticateJWT, aiController.getAiConfig);
 router.put('/config', authenticateJWT, aiController.updateAiConfig);
+router.get('/models', authenticateJWT, aiController.getAvailableModels);
 router.post('/test', authenticateJWT, aiController.testAiConnection);
 
 export default router;
