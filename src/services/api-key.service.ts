@@ -103,28 +103,38 @@ export class ApiKeyService {
   }
 
   /**
-   * Verifies incoming Client ID and API Key credentials in constant-time.
+   * Verifies incoming Client ID and API Key credentials in constant-time with detailed failure diagnostics.
    */
-  static async verifyApiKey(clientId: string, rawSecret: string) {
-    if (!clientId || !rawSecret) return null;
+  static async verifyApiKeyDetailed(clientId: string, rawSecret: string): Promise<{ apiKey: any | null; error?: string }> {
+    if (!clientId || !rawSecret) {
+      return { apiKey: null, error: 'X-Client-Id and X-Api-Key headers are required.' };
+    }
 
     const apiKey = await (prisma as any).tenantApiKey.findUnique({
       where: { clientId },
       include: { tenant: true },
     });
 
-    if (!apiKey) return null;
+    if (!apiKey) {
+      return { apiKey: null, error: `No API Key found matching Client ID [${clientId}].` };
+    }
 
-    // Check status
-    if (apiKey.status !== 'ACTIVE') return null;
+    if (apiKey.status === 'REVOKED') {
+      return { apiKey: null, error: 'This API Key has been revoked in Tenant Settings.' };
+    }
 
-    // Check expiration
-    if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
-      await (prisma as any).tenantApiKey.update({
-        where: { id: apiKey.id },
-        data: { status: 'EXPIRED' },
-      }).catch(() => {});
-      return null;
+    if (apiKey.status === 'EXPIRED' || (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date())) {
+      if (apiKey.status !== 'EXPIRED') {
+        await (prisma as any).tenantApiKey.update({
+          where: { id: apiKey.id },
+          data: { status: 'EXPIRED' },
+        }).catch(() => {});
+      }
+      return { apiKey: null, error: 'This API Key has expired.' };
+    }
+
+    if (apiKey.status !== 'ACTIVE') {
+      return { apiKey: null, error: `This API Key is currently ${apiKey.status.toLowerCase()}.` };
     }
 
     // Verify secret hash using constant-time comparison
@@ -132,8 +142,9 @@ export class ApiKeyService {
     const storedHashBuffer = Buffer.from(apiKey.hashedSecret, 'hex');
     const incomingHashBuffer = Buffer.from(incomingHash, 'hex');
 
-    if (storedHashBuffer.length !== incomingHashBuffer.length) return null;
-    if (!crypto.timingSafeEqual(storedHashBuffer, incomingHashBuffer)) return null;
+    if (storedHashBuffer.length !== incomingHashBuffer.length || !crypto.timingSafeEqual(storedHashBuffer, incomingHashBuffer)) {
+      return { apiKey: null, error: 'Invalid API secret key.' };
+    }
 
     // Asynchronously bump last used timestamp
     (prisma as any).tenantApiKey.update({
@@ -141,6 +152,14 @@ export class ApiKeyService {
       data: { lastUsedAt: new Date() },
     }).catch(() => {});
 
+    return { apiKey, error: undefined };
+  }
+
+  /**
+   * Verifies incoming Client ID and API Key credentials in constant-time.
+   */
+  static async verifyApiKey(clientId: string, rawSecret: string) {
+    const { apiKey } = await this.verifyApiKeyDetailed(clientId, rawSecret);
     return apiKey;
   }
 }

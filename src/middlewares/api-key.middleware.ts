@@ -35,11 +35,11 @@ export async function authenticateApiKey(
   }
 
   try {
-    const verifiedKey = await ApiKeyService.verifyApiKey(clientId, rawSecret);
+    const { apiKey: verifiedKey, error } = await ApiKeyService.verifyApiKeyDetailed(clientId, rawSecret);
     if (!verifiedKey) {
       res.status(401).json({
         success: false,
-        message: 'Invalid, expired, or revoked API Key credentials.',
+        message: error || 'Invalid API Key credentials.',
       });
       return;
     }
