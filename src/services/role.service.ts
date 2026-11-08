@@ -135,7 +135,7 @@ export class RoleService {
           isSystem: true,
           permissionCodes: allPermissions
             .map((p) => p.code)
-            .filter((c) => !c.startsWith("system:") && !c.startsWith("branches:delete")),
+            .filter((c) => !c.startsWith("system:") && !c.startsWith("branches:delete") && c !== "reports:view_financial"),
         },
         {
           name: "Cashier",

@@ -48,7 +48,7 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
     const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers['host'] || req.hostname;
     const subdomainSlug = extractSubdomainFromHost(hostHeader);
 
-    const isPlatformAdmin = user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN'].includes(r));
+    const isPlatformAdmin = user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN', 'SUPER_ADMIN', 'Super Admin'].includes(r));
 
     let resolvedTenantId: string | null = null;
     let resolvedTenantSlug: string | null = null;

@@ -260,5 +260,40 @@ export class GeneralLedgerService {
       isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
     };
   }
+
+  /**
+   * Retrieves paginated journal entries with line accounts for tenant
+   */
+  static async getJournalEntries(tenantId?: string | null, options?: { limit?: number; offset?: number; search?: string }) {
+    const where: any = {};
+    if (tenantId) where.tenantId = tenantId;
+    if (options?.search) {
+      where.OR = [
+        { entryNumber: { contains: options.search, mode: 'insensitive' } },
+        { description: { contains: options.search, mode: 'insensitive' } },
+        { reference: { contains: options.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const limit = Math.min(options?.limit || 50, 100);
+    const offset = options?.offset || 0;
+
+    const [entries, total] = await Promise.all([
+      (prisma as any).journalEntry.findMany({
+        where,
+        include: {
+          lines: {
+            include: { account: true }
+          }
+        },
+        orderBy: { date: 'desc' },
+        take: limit,
+        skip: offset
+      }),
+      (prisma as any).journalEntry.count({ where })
+    ]);
+
+    return { entries, total, limit, offset };
+  }
 }
 

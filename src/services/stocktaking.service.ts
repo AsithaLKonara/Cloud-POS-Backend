@@ -51,7 +51,7 @@ export class StocktakingService {
   /**
    * Cashiers / auditors record physical counted numbers per variant
    */
-  static async recordCounts(sessionId: string, counts: Array<{ variantId: string; countedQty: number; notes?: string }>) {
+  static async recordCounts(sessionId: string, counts: Array<{ variantId: string; countedQty: number; notes?: string }>, tenantId?: string | null) {
     const session = await (prisma as any).stocktakeSession.findUnique({
       where: { id: sessionId },
       include: { items: true }
@@ -59,6 +59,10 @@ export class StocktakingService {
 
     if (!session || session.status === 'RECONCILED' || session.status === 'CANCELLED') {
       throw new Error('Stocktake session not found or already closed/reconciled.');
+    }
+
+    if (tenantId && session.tenantId && session.tenantId !== tenantId) {
+      throw new Error('Unauthorized: Stocktake session does not belong to your tenant organization.');
     }
 
     const itemMap = new Map(session.items.map((i: any) => [i.variantId, i]));
@@ -88,7 +92,7 @@ export class StocktakingService {
   /**
    * Manager reconciliation: applies adjustments to inventory and posts shrinkage/surplus to GL
    */
-  static async reconcileStocktake(sessionId: string, managerNotes: string) {
+  static async reconcileStocktake(sessionId: string, managerNotes: string, tenantId?: string | null) {
     const session = await (prisma as any).stocktakeSession.findUnique({
       where: { id: sessionId },
       include: { items: true }
@@ -96,6 +100,10 @@ export class StocktakingService {
 
     if (!session || session.status !== 'IN_PROGRESS') {
       throw new Error('Session is not in progress or already reconciled.');
+    }
+
+    if (tenantId && session.tenantId && session.tenantId !== tenantId) {
+      throw new Error('Unauthorized: Stocktake session does not belong to your tenant organization.');
     }
 
     let netVarianceValueLkr = 0;

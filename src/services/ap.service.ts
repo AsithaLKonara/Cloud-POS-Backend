@@ -126,12 +126,17 @@ export class AccountsPayableService {
     amount: number;
     paymentMethod: 'CASH' | 'BANK_TRANSFER' | 'CHEQUE';
     reference?: string;
+    tenantId?: string | null;
   }) {
     const bill = await (prisma as any).vendorBill.findUnique({
       where: { id: data.billId }
     });
 
     if (!bill) throw new Error(`Vendor bill ${data.billId} not found.`);
+
+    if (data.tenantId && bill.tenantId && bill.tenantId !== data.tenantId) {
+      throw new Error(`Unauthorized: Vendor bill does not belong to your tenant organization.`);
+    }
 
     if (data.amount <= 0 || data.amount > bill.balanceDue) {
       throw new Error(`Invalid payment amount: Rs. ${data.amount}. Balance due is Rs. ${bill.balanceDue}`);
@@ -184,6 +189,13 @@ export class AccountsPayableService {
       orderBy: { dueDate: 'asc' }
     });
 
+    const supplierIds = Array.from(new Set(bills.map((b: any) => b.supplierId).filter(Boolean)));
+    const suppliers = supplierIds.length > 0 ? await (prisma as any).supplier.findMany({
+      where: { id: { in: supplierIds } },
+      select: { id: true, name: true, code: true }
+    }) : [];
+    const supMap = new Map(suppliers.map((s: any) => [s.id, s.name]));
+
     const now = new Date().getTime();
     const buckets = {
       current: 0,
@@ -216,6 +228,7 @@ export class AccountsPayableService {
 
       buckets.bills.push({
         ...b,
+        supplierName: supMap.get(b.supplierId) || 'Supplier',
         overdueDays: Math.max(0, overdueDays)
       });
     }

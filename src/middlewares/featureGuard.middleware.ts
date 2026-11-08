@@ -37,7 +37,7 @@ export function requirePlanFeature(featureKey: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const user = (req as any).user;
-      const isPlatformAdmin = user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN'].includes(r));
+      const isPlatformAdmin = user?.roles?.some((r: string) => ['SUPER_PLATFORM_ADMIN', 'PLATFORM_ADMIN', 'SUPER_ADMIN', 'Super Admin'].includes(r));
 
       // Platform admins bypass feature guards
       if (isPlatformAdmin) {

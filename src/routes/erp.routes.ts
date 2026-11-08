@@ -8,6 +8,7 @@ const router = Router();
 // General Ledger (GL)
 router.post('/gl/accounts/init', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.initChartOfAccounts);
 router.get('/gl/accounts', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.getChartOfAccounts);
+router.get('/gl/journals', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.getJournalEntries);
 router.post('/gl/journals', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.postJournalEntry);
 router.get('/gl/trial-balance', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.getTrialBalance);
 router.get('/gl/balance-sheet', authenticateJWT, requirePlanFeature('DOUBLE_ENTRY_GL'), erpController.getBalanceSheet);

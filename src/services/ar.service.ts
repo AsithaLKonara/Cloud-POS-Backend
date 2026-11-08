@@ -107,12 +107,17 @@ export class AccountsReceivableService {
     amount: number;
     paymentMethod: 'CASH' | 'BANK_TRANSFER' | 'CARD' | 'LANKA_QR';
     reference?: string;
+    tenantId?: string | null;
   }) {
     const invoice = await (prisma as any).salesInvoice.findUnique({
       where: { id: data.invoiceId }
     });
 
     if (!invoice) throw new Error(`Invoice ${data.invoiceId} not found.`);
+
+    if (data.tenantId && invoice.tenantId && invoice.tenantId !== data.tenantId) {
+      throw new Error(`Unauthorized: Sales invoice does not belong to your tenant organization.`);
+    }
 
     if (data.amount <= 0 || data.amount > invoice.balanceDue) {
       throw new Error(`Invalid payment amount: Rs. ${data.amount}. Balance due is Rs. ${invoice.balanceDue}`);
@@ -166,6 +171,16 @@ export class AccountsReceivableService {
       orderBy: { dueDate: 'asc' }
     });
 
+    const customerIds = Array.from(new Set(invoices.map((inv: any) => inv.customerId).filter(Boolean)));
+    const customers = customerIds.length > 0 ? await (prisma as any).customer.findMany({
+      where: { id: { in: customerIds } },
+      select: { id: true, firstName: true, lastName: true, companyName: true }
+    }) : [];
+    const custMap = new Map(customers.map((c: any) => [
+      c.id,
+      c.companyName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Customer'
+    ]));
+
     const now = new Date().getTime();
     const buckets = {
       current: 0,
@@ -198,6 +213,7 @@ export class AccountsReceivableService {
 
       buckets.invoices.push({
         ...inv,
+        customerName: custMap.get(inv.customerId) || 'Customer',
         overdueDays: Math.max(0, overdueDays)
       });
     }

@@ -510,8 +510,8 @@ export const analyticsService = {
         pv.price,
         p.name as "productName",
         p.brand,
-        p.grade,
-        p."unitVolume",
+        p.viscosity as "grade",
+        pv."unitVolumeLiters" as "unitVolume",
         p."productType"
       FROM "InventoryItem" ii
       JOIN "ProductVariant" pv ON ii."variantId" = pv.id

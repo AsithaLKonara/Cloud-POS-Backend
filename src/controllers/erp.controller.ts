@@ -48,6 +48,19 @@ export const postJournalEntry = async (req: Request, res: Response) => {
   }
 };
 
+export const getJournalEntries = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req);
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+    const search = req.query.search as string;
+    const result = await GeneralLedgerService.getJournalEntries(tenantId, { limit, offset, search });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export const getTrialBalance = async (req: Request, res: Response) => {
   try {
     const tenantId = getTenantId(req);
@@ -84,7 +97,11 @@ export const createVendorBill = async (req: Request, res: Response) => {
 
 export const recordVendorPayment = async (req: Request, res: Response) => {
   try {
-    const payment = await AccountsPayableService.recordVendorPayment(req.body);
+    const tenantId = getTenantId(req);
+    const payment = await AccountsPayableService.recordVendorPayment({
+      ...req.body,
+      tenantId
+    });
     res.json(payment);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -130,7 +147,11 @@ export const createSalesInvoice = async (req: Request, res: Response) => {
 
 export const recordCustomerPayment = async (req: Request, res: Response) => {
   try {
-    const payment = await AccountsReceivableService.recordCustomerPayment(req.body);
+    const tenantId = getTenantId(req);
+    const payment = await AccountsReceivableService.recordCustomerPayment({
+      ...req.body,
+      tenantId
+    });
     res.json(payment);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -203,9 +224,10 @@ export const startStocktake = async (req: Request, res: Response) => {
 
 export const recordStocktakeCounts = async (req: Request, res: Response) => {
   try {
+    const tenantId = getTenantId(req);
     const id = String(req.params.id);
     const { counts } = req.body;
-    const session = await StocktakingService.recordCounts(id, counts);
+    const session = await StocktakingService.recordCounts(id, counts, tenantId);
     res.json(session);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -214,9 +236,10 @@ export const recordStocktakeCounts = async (req: Request, res: Response) => {
 
 export const reconcileStocktake = async (req: Request, res: Response) => {
   try {
+    const tenantId = getTenantId(req);
     const id = String(req.params.id);
     const { managerNotes } = req.body;
-    const session = await StocktakingService.reconcileStocktake(id, managerNotes || 'Reconciliation approved');
+    const session = await StocktakingService.reconcileStocktake(id, managerNotes || 'Reconciliation approved', tenantId);
     res.json(session);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -231,7 +254,20 @@ export const getStocktakeSessions = async (req: Request, res: Response) => {
       include: { _count: { select: { items: true } } },
       orderBy: { createdAt: 'desc' }
     });
-    res.json(sessions);
+
+    const branchIds = Array.from(new Set(sessions.map((s: any) => s.branchId).filter(Boolean)));
+    const branches = branchIds.length > 0 ? await (prisma as any).branch.findMany({
+      where: { id: { in: branchIds } },
+      select: { id: true, name: true }
+    }) : [];
+    const branchMap = new Map(branches.map((b: any) => [b.id, b.name]));
+
+    const enriched = sessions.map((s: any) => ({
+      ...s,
+      branchName: branchMap.get(s.branchId) || 'Main Branch'
+    }));
+
+    res.json(enriched);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -245,7 +281,36 @@ export const getStocktakeSession = async (req: Request, res: Response) => {
       include: { items: true }
     });
     if (!session) return res.status(404).json({ error: 'Stocktake session not found' });
-    res.json(session);
+
+    // Enrich items with product details and branch details
+    const branch = session.branchId ? await (prisma as any).branch.findUnique({
+      where: { id: session.branchId },
+      select: { id: true, name: true }
+    }) : null;
+
+    const variantIds = (session.items || []).map((i: any) => i.variantId).filter(Boolean);
+    if (variantIds.length > 0) {
+      const variants = await (prisma as any).productVariant.findMany({
+        where: { id: { in: variantIds } },
+        include: { product: { select: { name: true } } }
+      });
+      const varMap = new Map(variants.map((v: any) => [v.id, v]));
+      session.items = session.items.map((it: any) => {
+        const v: any = varMap.get(it.variantId);
+        return {
+          ...it,
+          variantName: v?.name || 'Standard',
+          productTitle: v?.product?.name || 'Inventory Item',
+          sku: v?.sku || '-',
+          barcode: v?.barcode || '-'
+        };
+      });
+    }
+
+    res.json({
+      ...session,
+      branchName: branch?.name || 'Main Branch'
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

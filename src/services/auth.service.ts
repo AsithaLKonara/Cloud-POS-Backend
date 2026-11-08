@@ -624,6 +624,9 @@ export class AuthService {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
+        tenant: {
+          select: { id: true, name: true, slug: true, businessType: true, subscriptionTier: true },
+        },
         branch: {
           select: { id: true, name: true, code: true },
         },
@@ -656,6 +659,8 @@ export class AuthService {
       birthday: user.birthday,
       phone: user.phone,
       status: user.status,
+      tenantId: user.tenantId,
+      tenant: user.tenant,
       branchId: user.branchId,
       branch: user.branch,
       roles,
