@@ -5,6 +5,7 @@ import { AccountsPayableService } from '../services/ap.service';
 import { AccountsReceivableService } from '../services/ar.service';
 import { BillOfMaterialsService } from '../services/bom.service';
 import { StocktakingService } from '../services/stocktaking.service';
+import { WhatsAppService } from '../services/whatsapp.service';
 
 function getTenantId(req: Request): string | undefined {
   const explicit =
@@ -175,6 +176,30 @@ export const getArAgingReport = async (req: Request, res: Response) => {
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+export const sendWhatsAppArReminder = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req);
+    const invoiceId = req.params.invoiceId as string;
+    const initiatorUserId = (req as any).user?.userId;
+    const { phone } = req.body || {};
+
+    const result = await WhatsAppService.sendOverdueReminder(
+      tenantId!,
+      invoiceId,
+      initiatorUserId,
+      phone
+    );
+
+    res.json({
+      success: true,
+      message: `WhatsApp payment reminder sent to ${result.recipient}`,
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
   }
 };
 

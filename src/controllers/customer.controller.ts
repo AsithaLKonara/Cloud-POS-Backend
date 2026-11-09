@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../middlewares/errorHandler";
 import prisma from "../config/prisma";
+import { WhatsAppService } from "../services/whatsapp.service";
 
 export const getCustomers = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -114,5 +115,96 @@ export const updateCustomer = async (req: Request, res: Response, next: NextFunc
     res.status(200).json({ success: true, data: customer });
   } catch (error) {
     next(error);
+  }
+};
+
+export const sendWhatsAppStatement = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tenantId = (req as any).user?.tenantId;
+    const customerId = req.params.id as string;
+    const initiatorUserId = (req as any).user?.userId;
+    const { phone } = req.body || {};
+
+    // Find the oldest unpaid sales invoice for this customer or create a statement reminder
+    const invoice = await (prisma as any).salesInvoice.findFirst({
+      where: { customerId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } },
+      orderBy: { dueDate: 'asc' },
+    });
+
+    if (invoice) {
+      const result = await WhatsAppService.sendOverdueReminder(
+        tenantId,
+        invoice.id,
+        initiatorUserId,
+        phone
+      );
+      res.json({
+        success: true,
+        message: `WhatsApp statement sent to ${result.recipient}`,
+        data: result,
+      });
+      return;
+    }
+
+    // Otherwise send general statement based on credit balance
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) throw new AppError("Customer not found", 404);
+
+    const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
+    const formatted = WhatsAppService.formatOverdueReminderMessage(customer, tenant, {
+      invoiceNumber: 'STATEMENT',
+      balanceDue: customer.creditBalance || 0,
+      overdueDays: 0,
+    });
+
+    const targetPhone = phone || customer.phone;
+    if (!targetPhone) throw new AppError("Customer does not have a phone number on file", 400);
+
+    const result = await WhatsAppService.sendInteractiveButtons(
+      tenantId,
+      targetPhone,
+      formatted.bodyText,
+      formatted.buttons,
+      formatted.headerText,
+      formatted.footerText
+    );
+
+    res.json({
+      success: true,
+      message: `WhatsApp statement sent to ${result.recipient}`,
+      data: result,
+    });
+  } catch (err: any) {
+    next(err);
+  }
+};
+
+export const sendWhatsAppReorder = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tenantId = (req as any).user?.tenantId;
+    const customerId = req.params.id as string;
+    const { productId, phone } = req.body;
+    const initiatorUserId = (req as any).user?.userId;
+
+    if (!productId) {
+      res.status(400).json({ success: false, error: 'Product ID is required for reorder nudge.' });
+      return;
+    }
+
+    const result = await WhatsAppService.sendReorderNudge(
+      tenantId,
+      customerId,
+      productId,
+      initiatorUserId,
+      phone
+    );
+
+    res.json({
+      success: true,
+      message: `WhatsApp reorder nudge sent to ${result.recipient}`,
+      data: result,
+    });
+  } catch (err: any) {
+    next(err);
   }
 };

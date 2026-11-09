@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { orderService } from '../services/order.service';
+import { WhatsAppService } from '../services/whatsapp.service';
 
 export const searchCustomer = async (req: Request, res: Response) => {
   try {
@@ -208,5 +209,27 @@ export const fardarWebhook = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Fardar Webhook Error:', error);
     res.status(500).json({ error: error.message || 'Failed to process webhook' });
+  }
+};
+
+export const sendWhatsAppReceipt = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { phone } = req.body;
+    const userId = (req as any).user?.id;
+
+    const result = await WhatsAppService.sendOrderReceipt(id as string, phone, userId);
+
+    res.status(200).json({
+      success: true,
+      message: `WhatsApp digital e-bill successfully sent to ${result.recipient}`,
+      data: result,
+    });
+  } catch (error: any) {
+    console.error('Send WhatsApp Receipt Error:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'Failed to dispatch WhatsApp receipt',
+    });
   }
 };

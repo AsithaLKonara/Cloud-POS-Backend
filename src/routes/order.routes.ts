@@ -15,6 +15,7 @@ router.get('/:id', authenticateJWT, requirePermission("orders:view"), orderContr
 router.patch('/:id/status', authenticateJWT, requirePermission("orders:edit_status"), auditLog('Order', 'UPDATE'), orderController.updateOrderStatus);
 router.post('/:id/refund', authenticateJWT, requirePermission("orders:cancel_refund"), auditLog('Order', 'UPDATE'), orderController.refundOrder);
 router.post('/:id/refund/partial', authenticateJWT, requirePermission("orders:cancel_refund"), auditLog('Order', 'UPDATE'), orderController.refundPartialOrder);
+router.post('/:id/send-whatsapp-receipt', authenticateJWT, orderController.sendWhatsAppReceipt);
 router.post('/fardar-webhook', orderController.fardarWebhook);
 
 export default router;

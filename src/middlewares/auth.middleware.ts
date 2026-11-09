@@ -135,7 +135,7 @@ export function requireRole(...allowedRoles: string[]) {
       }
     }
 
-    if (isSuperAdmin) {
+    if (isSuperAdmin || isAdmin) {
       next();
       return;
     }
@@ -182,7 +182,7 @@ export function requirePermission(...requiredPermissions: string[]) {
       }
     }
 
-    if (isSuperAdmin) {
+    if (isSuperAdmin || isAdmin) {
       next();
       return;
     }

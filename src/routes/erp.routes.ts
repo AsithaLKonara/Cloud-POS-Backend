@@ -24,6 +24,7 @@ router.post('/ar/invoices', authenticateJWT, requirePlanFeature('ACCOUNTS_RECEIV
 router.get('/ar/invoices', authenticateJWT, requirePlanFeature('ACCOUNTS_RECEIVABLE'), erpController.getSalesInvoices);
 router.post('/ar/payments', authenticateJWT, requirePlanFeature('ACCOUNTS_RECEIVABLE'), erpController.recordCustomerPayment);
 router.get('/ar/aging', authenticateJWT, requirePlanFeature('ACCOUNTS_RECEIVABLE'), erpController.getArAgingReport);
+router.post('/ar/invoices/:invoiceId/whatsapp-reminder', authenticateJWT, requirePlanFeature('ACCOUNTS_RECEIVABLE'), erpController.sendWhatsAppArReminder);
 
 // Bill of Materials (BOM)
 router.post('/bom', authenticateJWT, requirePlanFeature('RECIPE_BOM'), erpController.upsertBom);

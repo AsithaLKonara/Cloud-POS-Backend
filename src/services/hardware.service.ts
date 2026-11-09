@@ -22,6 +22,13 @@ export interface ScaleReading {
   raw: string;
 }
 
+export type PoleDisplayProtocol = 'CD5220' | 'ESCPOS' | 'UTC' | 'AEDEX';
+
+export interface PoleDisplayLines {
+  line1: string;
+  line2: string;
+}
+
 export class HardwareService {
   /**
    * Generates raw ESC/POS byte array for 80mm / 58mm thermal printers
@@ -183,5 +190,167 @@ export class HardwareService {
         price: Math.round((numericValue / 100) * 100) / 100,
       };
     }
+  }
+
+  /**
+   * Cleans and pads/truncates a string to exact character width (default 20 for standard pole displays).
+   */
+  static formatPoleDisplayLine(text: string, width = 20): string {
+    const clean = (text || '')
+      .replace(/[^\x20-\x7E]/g, '') // Keep standard printable ASCII
+      .trim();
+    if (clean.length > width) {
+      return clean.substring(0, width);
+    }
+    return clean.padEnd(width, ' ');
+  }
+
+  /**
+   * Centers text within a fixed width (default 20 characters).
+   */
+  static centerText(text: string, width = 20): string {
+    const clean = (text || '').replace(/[^\x20-\x7E]/g, '').trim();
+    if (clean.length >= width) return clean.substring(0, width);
+    const leftPad = Math.floor((width - clean.length) / 2);
+    const rightPad = width - clean.length - leftPad;
+    return ' '.repeat(leftPad) + clean + ' '.repeat(rightPad);
+  }
+
+  /**
+   * Creates a two-column row (left text + right text) fitted to exact width.
+   */
+  static makeTwoColumnLine(left: string, right: string, width = 20): string {
+    const cleanRight = (right || '').replace(/[^\x20-\x7E]/g, '').trim();
+    const availableForLeft = Math.max(0, width - cleanRight.length - 1);
+    const cleanLeft = (left || '').replace(/[^\x20-\x7E]/g, '').trim().substring(0, availableForLeft);
+    const spaces = Math.max(1, width - cleanLeft.length - cleanRight.length);
+    return cleanLeft + ' '.repeat(spaces) + cleanRight;
+  }
+
+  /**
+   * Formats Idle / Welcome screen for 2x20 customer display.
+   */
+  static formatPoleDisplayIdle(storeName = 'XONIT POS', greeting = 'WELCOME! PLEASE PAY'): PoleDisplayLines {
+    return {
+      line1: this.centerText(storeName, 20),
+      line2: this.centerText(greeting, 20),
+    };
+  }
+
+  /**
+   * Formats Line item screen when cashier scans or updates a product.
+   */
+  static formatPoleDisplayItem(name: string, price: number, qty = 1, subtotal?: number): PoleDisplayLines {
+    const priceStr = price.toFixed(2);
+    const line1 = this.makeTwoColumnLine(name, priceStr, 20);
+
+    const calcSubtotal = subtotal !== undefined ? subtotal : price * qty;
+    const subStr = `SUB:${calcSubtotal.toFixed(0)}`;
+    const qtyStr = `QTY:${qty}`;
+    const line2 = this.makeTwoColumnLine(qtyStr, subStr, 20);
+
+    return { line1, line2 };
+  }
+
+  /**
+   * Formats Payment pending screen showing subtotal and total due.
+   */
+  static formatPoleDisplayPayment(subtotal: number, totalDue: number): PoleDisplayLines {
+    return {
+      line1: this.makeTwoColumnLine('SUBTOTAL:', `Rs.${subtotal.toLocaleString()}`, 20),
+      line2: this.makeTwoColumnLine('TOTAL DUE:', `Rs.${totalDue.toLocaleString()}`, 20),
+    };
+  }
+
+  /**
+   * Formats Sale Completed screen showing tender received and change due.
+   */
+  static formatPoleDisplayCompleted(amountPaid: number, changeDue: number): PoleDisplayLines {
+    return {
+      line1: this.makeTwoColumnLine('PAID CASH:', `Rs.${amountPaid.toLocaleString()}`, 20),
+      line2: this.makeTwoColumnLine('CHANGE DUE:', `Rs.${changeDue.toLocaleString()}`, 20),
+    };
+  }
+
+  /**
+   * Generates binary command buffer for 2x20 VFD / LCD Pole Displays.
+   * Supports CD5220 (Posiflex/Generic), ESC/POS (Epson DM-D), UTC Standard, and AEDEX.
+   */
+  static buildPoleDisplayBuffer(
+    line1: string,
+    line2: string,
+    protocol: PoleDisplayProtocol = 'CD5220'
+  ): Buffer {
+    const l1 = this.formatPoleDisplayLine(line1, 20);
+    const l2 = this.formatPoleDisplayLine(line2, 20);
+    const parts: number[] = [];
+
+    switch (protocol) {
+      case 'CD5220': {
+        // Posiflex / DSP800 / E-POS / Standard Chinese Generic VFD
+        // ESC @ (Initialize)
+        parts.push(0x1b, 0x40);
+        // Form Feed / Clear Display (0x0C)
+        parts.push(0x0c);
+        // Overwrite Line 1: ESC Q A <text> CR
+        parts.push(0x1b, 0x51, 0x41);
+        parts.push(...Buffer.from(l1, 'ascii'));
+        parts.push(0x0d);
+        // Overwrite Line 2: ESC Q B <text> CR
+        parts.push(0x1b, 0x51, 0x42);
+        parts.push(...Buffer.from(l2, 'ascii'));
+        parts.push(0x0d);
+        break;
+      }
+
+      case 'ESCPOS': {
+        // Epson DM-D110, DM-D210, Bixolon, Citizen
+        // ESC @ (Initialize)
+        parts.push(0x1b, 0x40);
+        // Clear Display
+        parts.push(0x0c);
+        // Move to row 1 col 1: US $ 1 1
+        parts.push(0x1f, 0x24, 0x01, 0x01);
+        parts.push(...Buffer.from(l1, 'ascii'));
+        // Move to row 2 col 1: US $ 1 2
+        parts.push(0x1f, 0x24, 0x01, 0x02);
+        parts.push(...Buffer.from(l2, 'ascii'));
+        break;
+      }
+
+      case 'UTC': {
+        // UTC Standard / Enhanced (UTC, Firich)
+        // Clear Display
+        parts.push(0x0c);
+        // Move to Line 1 (0x0B)
+        parts.push(0x0b);
+        parts.push(...Buffer.from(l1, 'ascii'));
+        // Move to Line 2 (0x1F, 0x42)
+        parts.push(0x1f, 0x42);
+        parts.push(...Buffer.from(l2, 'ascii'));
+        break;
+      }
+
+      case 'AEDEX': {
+        // AEDEX protocol
+        // Line 1: ! # 1 <text> CR
+        parts.push(0x21, 0x23, 0x31);
+        parts.push(...Buffer.from(l1, 'ascii'));
+        parts.push(0x0d);
+        // Line 2: ! # 2 <text> CR
+        parts.push(0x21, 0x23, 0x32);
+        parts.push(...Buffer.from(l2, 'ascii'));
+        parts.push(0x0d);
+        break;
+      }
+
+      default: {
+        // Plain ASCII fallback (Line 1 + CRLF + Line 2)
+        parts.push(...Buffer.from(`${l1}\r\n${l2}`, 'ascii'));
+        break;
+      }
+    }
+
+    return Buffer.from(parts);
   }
 }

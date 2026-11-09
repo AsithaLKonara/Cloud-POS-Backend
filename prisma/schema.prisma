@@ -62,6 +62,7 @@ model Tenant {
   apiKeys                TenantApiKey[]
   webhookEndpoints       TenantWebhookEndpoint[]
   roles                  Role[]
+  whatsAppMessages       WhatsAppMessage[]
 
   @@index([slug])
   @@index([status])
@@ -561,6 +562,7 @@ model Customer {
   reviews            Review[]
   wishlist           Wishlist?
   creditTransactions CustomerCreditLedger[]
+  whatsAppMessages   WhatsAppMessage[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -1073,6 +1075,7 @@ enum IntegrationCategory {
   COURIER_LOGISTICS
   SMS_GATEWAY
   ACCOUNTING_ERP
+  MESSAGING_WHATSAPP
 }
 
 model TenantIntegrationCredential {
@@ -1351,3 +1354,24 @@ model PosHeldCart {
   @@index([tenantId])
   @@index([branchId])
 }
+
+model WhatsAppMessage {
+  id             String    @id @default(uuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  phone          String
+  direction      String    // INBOUND or OUTBOUND
+  senderName     String?
+  messageType    String    @default("text") // text, template, button, interactive
+  content        String
+  waMessageId    String?
+  status         String    @default("SENT") // SENT, DELIVERED, READ, RECEIVED, FAILED
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([tenantId, phone])
+  @@index([tenantId, createdAt])
+}
+

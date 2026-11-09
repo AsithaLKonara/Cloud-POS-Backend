@@ -20,6 +20,7 @@ const safeMethods = ['GET', 'HEAD', 'OPTIONS'];
 const excludedRoutes = [
   '/api/v1/payments/webhook',
   '/api/v1/inventory/shipping/webhook',
+  '/api/v1/integrations/whatsapp/webhook',
   '/api/v1/headless',
   '/api/v1/upload',
   '/upload',

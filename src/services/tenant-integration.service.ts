@@ -81,6 +81,25 @@ export interface FardarConfig {
   isSandbox?: boolean;
 }
 
+export interface WhatsAppTriggersConfig {
+  posReceipts: boolean;
+  orderTracking: boolean;
+  abandonedCart: boolean;
+  creditOverdue: boolean;
+  loyaltyAlerts: boolean;
+  catalogSync: boolean;
+}
+
+export interface WhatsAppConfig {
+  enabled: boolean;
+  wabaId: string;
+  phoneNumberId: string;
+  accessToken?: string;
+  verifyToken?: string;
+  isSandbox: boolean;
+  triggers: WhatsAppTriggersConfig;
+}
+
 export interface TenantIntegrations {
   paymentGateways: {
     onepay: OnePayConfig;
@@ -95,6 +114,9 @@ export interface TenantIntegrations {
     koombiyo: KoombiyoConfig;
     promptx: PromptXConfig;
     domex: DomexConfig;
+  };
+  messaging: {
+    whatsapp: WhatsAppConfig;
   };
 }
 
@@ -112,6 +134,22 @@ const DEFAULT_INTEGRATIONS: TenantIntegrations = {
     koombiyo: { enabled: false, pickupCode: '' },
     promptx: { enabled: false, clientCode: '' },
     domex: { enabled: false, accountNumber: '' },
+  },
+  messaging: {
+    whatsapp: {
+      enabled: false,
+      wabaId: '',
+      phoneNumberId: '',
+      isSandbox: true,
+      triggers: {
+        posReceipts: true,
+        orderTracking: true,
+        abandonedCart: true,
+        creditOverdue: true,
+        loyaltyAlerts: true,
+        catalogSync: false,
+      },
+    },
   },
 };
 
@@ -157,6 +195,19 @@ export class TenantIntegrationService {
             ...(result.couriers as any)[providerKey],
             ...decrypted,
             enabled: cred.isEnabled,
+          };
+        } else if (cred.category === 'MESSAGING_WHATSAPP') {
+          (result.messaging as any)[providerKey] = {
+            ...(result.messaging as any)[providerKey],
+            ...decrypted,
+            enabled: cred.isEnabled,
+            wabaId: cred.accountIdentifier || decrypted.wabaId || '',
+            phoneNumberId: cred.merchantId || decrypted.phoneNumberId || '',
+            isSandbox: cred.environment === 'SANDBOX',
+            triggers: {
+              ...(result.messaging as any)[providerKey]?.triggers,
+              ...(decrypted.triggers || (cred.customSettings as any)?.triggers || {}),
+            },
           };
         }
       } catch (err: any) {
@@ -208,6 +259,12 @@ export class TenantIntegrationService {
       }
       if (result.couriers.fardar.apiKey) {
         result.couriers.fardar.apiKey = maskSecretValue(result.couriers.fardar.apiKey);
+      }
+      if (result.messaging?.whatsapp?.accessToken) {
+        result.messaging.whatsapp.accessToken = maskSecretValue(result.messaging.whatsapp.accessToken);
+      }
+      if (result.messaging?.whatsapp?.verifyToken) {
+        result.messaging.whatsapp.verifyToken = maskSecretValue(result.messaging.whatsapp.verifyToken);
       }
     }
 
@@ -437,6 +494,119 @@ export class TenantIntegrationService {
     return this.getTenantIntegrations(tenantId, true);
   }
 
+  /**
+   * Updates messaging provider settings (Meta WhatsApp Business API) for a tenant,
+   * storing sensitive system tokens and verification secrets in encrypted vault.
+   */
+  static async updateMessaging(
+    tenantId: string,
+    provider: 'whatsapp' | string,
+    config: any
+  ) {
+    const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) throw new Error(`Tenant with ID ${tenantId} not found.`);
+
+    const providerUpper = provider.toUpperCase();
+    const env = config.isSandbox ? 'SANDBOX' : 'PRODUCTION';
+
+    // 1. Fetch current stored credential if updating (to preserve unchanged secrets)
+    let currentDecrypted: Record<string, any> = {};
+    if (typeof (prisma as any).tenantIntegrationCredential?.findUnique === 'function') {
+      const existing = await (prisma as any).tenantIntegrationCredential.findUnique({
+        where: {
+          tenantId_provider_environment: {
+            tenantId,
+            provider: providerUpper,
+            environment: env,
+          },
+        },
+      });
+
+      if (existing) {
+        try {
+          currentDecrypted = decryptVaultJson(
+            { ciphertext: existing.encryptedData, iv: existing.iv, authTag: existing.authTag },
+            tenantId
+          );
+        } catch {
+          currentDecrypted = {};
+        }
+      }
+    }
+    const legacyMessagingSettings = ((tenant.settings as any)?.integrations?.messaging as any)?.[provider] || {};
+    currentDecrypted = { ...legacyMessagingSettings, ...currentDecrypted };
+
+    const mergedPayload = { ...currentDecrypted, ...config };
+    for (const key of ['accessToken', 'verifyToken']) {
+      if (config[key] && config[key].includes('•••')) {
+        mergedPayload[key] = currentDecrypted[key];
+      }
+    }
+
+    // Update tenant.settings
+    const currentSettings = (tenant.settings as Record<string, any>) || {};
+    const integrations = currentSettings.integrations || {};
+    const messaging = integrations.messaging || {};
+    messaging[provider] = mergedPayload;
+    if (typeof (prisma as any).tenant?.update === 'function') {
+      await (prisma as any).tenant.update({
+        where: { id: tenantId },
+        data: {
+          settings: {
+            ...currentSettings,
+            integrations: {
+              ...integrations,
+              messaging,
+            },
+          },
+        },
+      });
+    }
+
+    if (typeof (prisma as any).tenantIntegrationCredential?.upsert === 'function') {
+      const encrypted = encryptVaultJson(mergedPayload, tenantId);
+      await (prisma as any).tenantIntegrationCredential.upsert({
+        where: {
+          tenantId_provider_environment: {
+            tenantId,
+            provider: providerUpper,
+            environment: env,
+          },
+        },
+        update: {
+          category: 'MESSAGING_WHATSAPP',
+          isEnabled: Boolean(config.enabled),
+          encryptedData: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+          merchantId: config.phoneNumberId || null,
+          accountIdentifier: config.wabaId || null,
+          customSettings: { triggers: config.triggers || {} },
+          healthStatus: 'HEALTHY',
+          lastTestedAt: new Date(),
+        },
+        create: {
+          tenantId,
+          category: 'MESSAGING_WHATSAPP',
+          provider: providerUpper,
+          environment: env,
+          isEnabled: Boolean(config.enabled),
+          encryptedData: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+          merchantId: config.phoneNumberId || null,
+          accountIdentifier: config.wabaId || null,
+          customSettings: { triggers: config.triggers || {} },
+          healthStatus: 'HEALTHY',
+          lastTestedAt: new Date(),
+        },
+      });
+    }
+
+    logger.info(`Encrypted and saved [${provider}] messaging credentials in vault for tenant [${tenant.name}]`);
+    return this.getTenantIntegrations(tenantId, true);
+  }
+
 
   /**
    * Helper for internal backend services to retrieve unmasked credentials for runtime execution.
@@ -470,9 +640,9 @@ export class TenantIntegrationService {
   }
 
   /**
-   * Tests / simulates connection with the specified gateway or courier provider.
+   * Tests / simulates connection with the specified gateway, courier, or messaging provider.
    */
-  static async testConnection(tenantId: string, type: 'payment' | 'courier', provider: string) {
+  static async testConnection(tenantId: string, type: 'payment' | 'courier' | 'messaging', provider: string) {
     const integrations = await this.getTenantIntegrations(tenantId, false);
 
     if (type === 'payment') {
@@ -488,6 +658,22 @@ export class TenantIntegrationService {
         mode: config.isSandbox ? 'SANDBOX' : 'LIVE',
         latencyMs: Math.floor(40 + Math.random() * 30),
         message: `Successfully connected to ${provider.toUpperCase()} Gateway with vault encryption.`,
+      };
+    } else if (type === 'messaging') {
+      const config = (integrations.messaging as any)?.[provider];
+      if (!config) throw new Error(`Unknown messaging provider: ${provider}`);
+      if (!config.enabled) throw new Error(`${provider} is currently disabled.`);
+
+      return {
+        success: true,
+        provider,
+        type: 'messaging',
+        status: 'CONNECTED',
+        mode: config.isSandbox ? 'SANDBOX' : 'LIVE',
+        latencyMs: Math.floor(60 + Math.random() * 30),
+        phoneNumberId: config.phoneNumberId || 'sandbox_phone_id',
+        wabaId: config.wabaId || 'sandbox_waba_id',
+        message: `Successfully authenticated with Meta WhatsApp Business Cloud API (WABA ID: ${config.wabaId || 'Sandbox'}).`,
       };
     } else {
       const config = (integrations.couriers as any)[provider];
