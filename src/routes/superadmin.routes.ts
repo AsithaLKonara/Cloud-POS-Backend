@@ -25,6 +25,7 @@ router.post('/tenants/provision', (req, res) => controller.provisionTurnkeyTenan
 router.put('/tenants/:tenantId', (req, res) => controller.updateTenantSettings(req, res));
 router.patch('/tenants/:tenantId/status', (req, res) => controller.updateTenantStatus(req, res));
 router.patch('/tenants/:tenantId/trial', (req, res) => controller.extendTrial(req, res));
+router.post('/tenants/:tenantId/impersonate', (req, res) => controller.impersonateTenant(req, res));
 
 // Tenant Super Admins Management
 router.get('/tenants/:tenantId/admins', (req, res) => controller.getTenantAdmins(req, res));
@@ -35,9 +36,44 @@ router.post('/tenants/:tenantId/admins/:adminId/reset-password', (req, res) => c
 // Infrastructure & Cluster Telemetry
 router.get('/cluster', (req, res) => controller.getCluster(req, res));
 
-// Subscription Plans Pricing & Platform Invoices
+// Subscription Plans Pricing, Packages & Platform Invoices
+router.get('/plans', (req, res) => controller.getPlans(req, res));
+router.post('/plans', (req, res) => controller.createPlan(req, res));
+router.put('/plans/:planKey', (req, res) => controller.updatePlan(req, res));
+router.delete('/plans/:planKey', (req, res) => controller.deletePlan(req, res));
 router.patch('/plans/:tier/price', (req, res) => controller.updatePlanPrice(req, res));
+router.post('/tenants/:tenantId/assign-plan', (req, res) => controller.assignPlanToTenant(req, res));
 router.post('/invoices', (req, res) => controller.generateInvoice(req, res));
 router.patch('/invoices/:invoiceId/status', (req, res) => controller.updateInvoiceStatus(req, res));
+
+// Global Feature Flags & Modular Entitlements
+router.get('/features', (req, res) => controller.getFeatureFlags(req, res));
+router.patch('/features/global/:key', (req, res) => controller.updateGlobalFeatureFlag(req, res));
+router.get('/tenants/:tenantId/entitlements', (req, res) => controller.getTenantEntitlements(req, res));
+router.put('/tenants/:tenantId/entitlements', (req, res) => controller.updateTenantEntitlements(req, res));
+
+// Cross-Tenant Security & Global Audit Log
+router.get('/audit', (req, res) => controller.getGlobalAuditLogs(req, res));
+router.get('/audit/stats', (req, res) => controller.getAuditStats(req, res));
+
+// Automated Dunning, Delinquency & Grace Period Manager
+router.get('/dunning', (req, res) => controller.getDelinquencyOverview(req, res));
+router.post('/dunning/run', (req, res) => controller.triggerDunningScan(req, res));
+router.post('/dunning/tenants/:tenantId/extend-grace', (req, res) => controller.extendGracePeriod(req, res));
+router.post('/dunning/tenants/:tenantId/exemption', (req, res) => controller.toggleDunningExemption(req, res));
+
+// Platform Announcements & Broadcasts
+router.get('/announcements', (req, res) => controller.getAnnouncements(req, res));
+router.post('/announcements', (req, res) => controller.createAnnouncement(req, res));
+router.put('/announcements/:id', (req, res) => controller.updateAnnouncement(req, res));
+router.patch('/announcements/:id/toggle', (req, res) => controller.toggleAnnouncement(req, res));
+router.delete('/announcements/:id', (req, res) => controller.deleteAnnouncement(req, res));
+
+// Database Snapshots, Disaster Recovery & Media Storage Manager
+router.get('/backups', (req, res) => controller.getBackups(req, res));
+router.post('/backups', (req, res) => controller.createBackup(req, res));
+router.delete('/backups/:filename', (req, res) => controller.deleteBackup(req, res));
+router.get('/backups/:filename/download', (req, res) => controller.downloadBackup(req, res));
+router.get('/storage/stats', (req, res) => controller.getStorageStats(req, res));
 
 export default router;

@@ -3,6 +3,12 @@ import bcrypt from 'bcryptjs';
 import prisma from '../config/prisma';
 import { SuperAdminService } from '../services/superadmin.service';
 import { TenantService } from '../services/tenant.service';
+import { SubscriptionService } from '../services/subscription.service';
+import { FeatureFlagService } from '../services/feature-flag.service';
+import { SuperAdminAuditService } from '../services/superadmin-audit.service';
+import { DunningService } from '../services/dunning.service';
+import { AnnouncementService } from '../services/announcement.service';
+import { DisasterRecoveryService } from '../services/disaster-recovery.service';
 
 export class SuperAdminController {
   async getKPIs(req: Request, res: Response): Promise<void> {
@@ -139,6 +145,63 @@ export class SuperAdminController {
       res.status(200).json({ success: true, data: outlets });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message || 'Failed to fetch top outlets' });
+    }
+  }
+
+  async getPlans(req: Request, res: Response): Promise<void> {
+    try {
+      const plans = await SubscriptionService.getPlans();
+      res.status(200).json({ success: true, data: plans });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch subscription packages' });
+    }
+  }
+
+  async createPlan(req: Request, res: Response): Promise<void> {
+    try {
+      const created = await SubscriptionService.createPlan(req.body);
+      res.status(201).json({ success: true, message: `Package "${created.name}" created successfully`, data: created });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to create subscription package' });
+    }
+  }
+
+  async updatePlan(req: Request, res: Response): Promise<void> {
+    try {
+      const planKey = req.params.planKey as string;
+      const updated = await SubscriptionService.updatePlanPricing(planKey, req.body);
+      res.status(200).json({ success: true, message: `Package "${planKey}" updated successfully`, data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update subscription package' });
+    }
+  }
+
+  async deletePlan(req: Request, res: Response): Promise<void> {
+    try {
+      const planKey = req.params.planKey as string;
+      const result = await SubscriptionService.deletePlan(planKey);
+      res.status(200).json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to delete subscription package' });
+    }
+  }
+
+  async assignPlanToTenant(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.params.tenantId as string;
+      const { planKey, billingCycle = 'MONTHLY', customPriceLkr } = req.body;
+      if (!planKey) {
+        res.status(400).json({ success: false, message: 'planKey is required' });
+        return;
+      }
+      const result = await SubscriptionService.activateSubscription(tenantId, {
+        planKey: planKey.toUpperCase(),
+        billingCycle,
+        customMonthlyPriceLkr: customPriceLkr,
+      });
+      res.status(200).json({ success: true, message: `Tenant successfully assigned to package ${planKey}`, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to assign package to tenant' });
     }
   }
 
@@ -350,6 +413,292 @@ export class SuperAdminController {
       res.status(200).json({ success: true, message: 'Tenant admin password successfully reset.' });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message || 'Failed to reset admin password' });
+    }
+  }
+
+  async impersonateTenant(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const superAdminUser = (req as any).user;
+      const result = await SuperAdminService.impersonateTenant(tenantId as string, superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Successfully generated impersonation context for ${result.user.tenant?.name}`,
+        data: result,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to impersonate tenant' });
+    }
+  }
+
+  async getFeatureFlags(req: Request, res: Response): Promise<void> {
+    try {
+      const flags = await FeatureFlagService.getAllGlobalFlags();
+      res.status(200).json({ success: true, data: flags });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch global feature flags' });
+    }
+  }
+
+  async updateGlobalFeatureFlag(req: Request, res: Response): Promise<void> {
+    try {
+      const { key } = req.params;
+      const { isEnabled } = req.body;
+      if (typeof isEnabled !== 'boolean') {
+        res.status(400).json({ success: false, message: 'isEnabled must be a boolean' });
+        return;
+      }
+      const superAdminUser = (req as any).user;
+      const updated = await FeatureFlagService.updateGlobalFlag(key as string, isEnabled, superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Feature flag ${key} set to ${isEnabled ? 'ENABLED' : 'DISABLED'}`,
+        data: updated,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update feature flag' });
+    }
+  }
+
+  async getTenantEntitlements(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const entitlements = await FeatureFlagService.getTenantEntitlements(tenantId as string);
+      res.status(200).json({ success: true, data: entitlements });
+    } catch (err: any) {
+      res.status(404).json({ success: false, message: err.message || 'Failed to fetch tenant entitlements' });
+    }
+  }
+
+  async updateTenantEntitlements(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const { overrides } = req.body;
+      if (!overrides || typeof overrides !== 'object') {
+        res.status(400).json({ success: false, message: 'overrides object is required' });
+        return;
+      }
+      const superAdminUser = (req as any).user;
+      const updated = await FeatureFlagService.updateTenantEntitlements(
+        tenantId as string,
+        overrides,
+        superAdminUser
+      );
+      res.status(200).json({
+        success: true,
+        message: 'Tenant feature entitlements updated successfully',
+        data: updated,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update tenant entitlements' });
+    }
+  }
+
+  async getGlobalAuditLogs(req: Request, res: Response): Promise<void> {
+    try {
+      const { search, action, entity, tenantId, timeframe, page, limit } = req.query;
+      const result = await SuperAdminAuditService.getGlobalAuditLogs({
+        search: search as string,
+        action: action as string,
+        entity: entity as string,
+        tenantId: tenantId as string,
+        timeframe: timeframe as string,
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      });
+      res.status(200).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch global audit logs' });
+    }
+  }
+
+  async getAuditStats(req: Request, res: Response): Promise<void> {
+    try {
+      const stats = await SuperAdminAuditService.getAuditStats();
+      res.status(200).json({ success: true, data: stats });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch audit stats' });
+    }
+  }
+
+  async getDelinquencyOverview(req: Request, res: Response): Promise<void> {
+    try {
+      const overview = await DunningService.getDelinquencyOverview();
+      res.status(200).json({ success: true, data: overview });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch delinquency overview' });
+    }
+  }
+
+  async extendGracePeriod(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const { days } = req.body;
+      const daysToAdd = Number(days) || 7;
+      const superAdminUser = (req as any).user;
+      const result = await DunningService.extendGracePeriod(tenantId as string, daysToAdd, superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Grace period extended by ${daysToAdd} days.`,
+        data: result,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to extend grace period' });
+    }
+  }
+
+  async toggleDunningExemption(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const { isExempt } = req.body;
+      const superAdminUser = (req as any).user;
+      const result = await DunningService.toggleExemption(tenantId as string, Boolean(isExempt), superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Tenant is now ${result.isExempt ? 'EXEMPT' : 'SUBJECT TO'} automated suspension.`,
+        data: result,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to toggle exemption' });
+    }
+  }
+
+  async triggerDunningScan(req: Request, res: Response): Promise<void> {
+    try {
+      const superAdminUser = (req as any).user;
+      const result = await DunningService.triggerDunningScan(superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Dunning scan completed. Scanned ${result.scannedCount} tenants, ${result.suspendedCount} suspended, ${result.inGraceCount} in grace period.`,
+        data: result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to execute dunning scan' });
+    }
+  }
+
+  // --- Task 5: Platform Announcements & Broadcasts ---
+  async getAnnouncements(req: Request, res: Response): Promise<void> {
+    try {
+      const announcements = await AnnouncementService.getAllAnnouncements();
+      res.status(200).json({ success: true, data: announcements });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch announcements' });
+    }
+  }
+
+  async createAnnouncement(req: Request, res: Response): Promise<void> {
+    try {
+      const superAdminUser = (req as any).user;
+      const announcement = await AnnouncementService.createAnnouncement(req.body, superAdminUser);
+      res.status(201).json({ success: true, message: 'Broadcast announcement created', data: announcement });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to create announcement' });
+    }
+  }
+
+  async updateAnnouncement(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const superAdminUser = (req as any).user;
+      const updated = await AnnouncementService.updateAnnouncement(id as string, req.body, superAdminUser);
+      res.status(200).json({ success: true, message: 'Announcement updated', data: updated });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to update announcement' });
+    }
+  }
+
+  async toggleAnnouncement(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const superAdminUser = (req as any).user;
+      const updated = await AnnouncementService.toggleActive(id as string, superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Announcement ${updated.isActive ? 'activated' : 'deactivated'}`,
+        data: updated,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to toggle announcement' });
+    }
+  }
+
+  async deleteAnnouncement(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const superAdminUser = (req as any).user;
+      await AnnouncementService.deleteAnnouncement(id as string, superAdminUser);
+      res.status(200).json({ success: true, message: 'Announcement deleted successfully' });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to delete announcement' });
+    }
+  }
+
+  async getActiveBroadcasts(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = (req as any).tenantId || (req as any).user?.tenantId || (req.query.tenantId as string);
+      const active = await AnnouncementService.getActiveAnnouncementsForTenant(tenantId);
+      res.status(200).json({ success: true, data: active });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch active broadcasts' });
+    }
+  }
+
+  // --- Task 6: Disaster Recovery & Storage ---
+  async getBackups(req: Request, res: Response): Promise<void> {
+    try {
+      const backups = await DisasterRecoveryService.listBackups();
+      res.status(200).json({ success: true, data: backups });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to list backups' });
+    }
+  }
+
+  async createBackup(req: Request, res: Response): Promise<void> {
+    try {
+      const { label } = req.body;
+      const superAdminUser = (req as any).user;
+      const backup = await DisasterRecoveryService.createBackup(label, superAdminUser);
+      res.status(201).json({
+        success: true,
+        message: 'Database backup snapshot created successfully',
+        data: backup,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to create backup' });
+    }
+  }
+
+  async deleteBackup(req: Request, res: Response): Promise<void> {
+    try {
+      const { filename } = req.params;
+      const superAdminUser = (req as any).user;
+      await DisasterRecoveryService.deleteBackup(filename as string, superAdminUser);
+      res.status(200).json({
+        success: true,
+        message: `Backup ${filename} deleted successfully`,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to delete backup' });
+    }
+  }
+
+  async downloadBackup(req: Request, res: Response): Promise<void> {
+    try {
+      const { filename } = req.params;
+      const filePath = DisasterRecoveryService.getDownloadFilePath(filename as string);
+      res.download(filePath, filename as string);
+    } catch (err: any) {
+      res.status(404).json({ success: false, message: err.message || 'Backup file not found' });
+    }
+  }
+
+  async getStorageStats(req: Request, res: Response): Promise<void> {
+    try {
+      const stats = await DisasterRecoveryService.getStorageStats();
+      res.status(200).json({ success: true, data: stats });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch storage statistics' });
     }
   }
 }

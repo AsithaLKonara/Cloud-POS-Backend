@@ -199,6 +199,14 @@ export class AuthController {
 
       const user = await AuthService.getMe(req.user.userId);
 
+      if (user && req.user?.isImpersonated) {
+        (user as any).isImpersonated = true;
+        (user as any).impersonator = {
+          id: req.user.impersonatorId,
+          email: req.user.impersonatorEmail,
+        };
+      }
+
       res.status(200).json({
         success: true,
         data: user,

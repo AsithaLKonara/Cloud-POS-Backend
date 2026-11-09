@@ -31,6 +31,9 @@ export interface JWTPayload {
   tenantId?: string | null;
   tenantSlug?: string | null;
   branchId?: string | null;
+  isImpersonated?: boolean;
+  impersonatorId?: string;
+  impersonatorEmail?: string;
   iat?: number;
   exp?: number;
 }

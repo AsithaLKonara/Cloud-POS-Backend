@@ -1,6 +1,8 @@
 import prisma from '../config/prisma';
 import { redisClient } from '../config/redis';
 import { logger } from '../utils/logger';
+import { generateAccessToken } from '../utils/jwt';
+import { AuthService } from './auth.service';
 import { SubscriptionService, DEFAULT_PLANS, PlanConfig } from './subscription.service';
 import { SystemMonitorService } from './system-monitor.service';
 
@@ -771,6 +773,207 @@ export class SuperAdminService {
       ],
       uptimeSeconds: vps.uptimeSeconds,
       uptimeFormatted: vps.uptimeFormatted,
+    };
+  }
+
+  /**
+   * Generates a signed impersonation token allowing Super Admin to log into any tenant's workspace
+   */
+  static async impersonateTenant(tenantId: string, superAdminUser: any) {
+    const tenant = await (prisma as any).tenant.findUnique({
+      where: { id: tenantId },
+      include: {
+        branches: {
+          select: { id: true, name: true, code: true, isActive: true },
+          take: 5,
+        },
+      },
+    });
+
+    if (!tenant) {
+      throw new Error(`Tenant with ID "${tenantId}" not found.`);
+    }
+
+    // Find best target user for impersonation: preferred order is ADMIN/Tenant Admin, then any user
+    let targetUser = await (prisma as any).user.findFirst({
+      where: {
+        tenantId,
+        userRoles: {
+          some: {
+            role: {
+              name: { in: ['ADMIN', 'Admin', 'Super Admin', 'SUPER_ADMIN', 'Tenant Admin', 'Branch Admin'] },
+            },
+          },
+        },
+      },
+      include: {
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                permissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        branch: {
+          select: { id: true, name: true, code: true },
+        },
+      },
+    });
+
+    // If no admin user found, get any user in this tenant
+    if (!targetUser) {
+      targetUser = await (prisma as any).user.findFirst({
+        where: { tenantId },
+        include: {
+          userRoles: {
+            include: {
+              role: {
+                include: {
+                  permissions: {
+                    include: {
+                      permission: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          branch: {
+            select: { id: true, name: true, code: true },
+          },
+        },
+      });
+    }
+
+    // If still no user exists at all for this tenant, create an on-the-fly tenant administrator
+    if (!targetUser) {
+      const defaultBranch = tenant.branches?.[0] || null;
+      let adminRole = await (prisma as any).role.findFirst({
+        where: {
+          name: 'ADMIN',
+          OR: [{ tenantId }, { isSystem: true }],
+        },
+      });
+
+      if (!adminRole) {
+        adminRole = await (prisma as any).role.create({
+          data: {
+            name: 'ADMIN',
+            description: 'Tenant Administrator',
+            tenantId,
+            isSystem: true,
+            status: 'Active',
+          },
+        });
+      }
+
+      const generatedEmail = `admin@${tenant.slug || 'store'}.xonit.space`.toLowerCase();
+      targetUser = await (prisma as any).user.create({
+        data: {
+          email: generatedEmail,
+          password: '$2a$10$e/placeholderHashForImpersonatedAdminAccountOnly1234567890',
+          name: `${tenant.name} Administrator`,
+          tenantId: tenant.id,
+          branchId: defaultBranch?.id || null,
+          status: 'ACTIVE',
+          userRoles: {
+            create: { roleId: adminRole.id },
+          },
+        },
+        include: {
+          userRoles: {
+            include: {
+              role: {
+                include: {
+                  permissions: {
+                    include: {
+                      permission: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          branch: {
+            select: { id: true, name: true, code: true },
+          },
+        },
+      });
+    }
+
+    const { roles, permissions } = AuthService.extractUserRolesAndPermissions(targetUser);
+
+    // If roles list is empty for whatever reason, guarantee ADMIN
+    const finalRoles = roles.length > 0 ? roles : ['ADMIN'];
+
+    const accessToken = generateAccessToken({
+      userId: targetUser.id,
+      email: targetUser.email,
+      roles: finalRoles,
+      permissions,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      branchId: targetUser.branchId || tenant.branches?.[0]?.id || null,
+      isImpersonated: true,
+      impersonatorId: superAdminUser?.userId || superAdminUser?.id,
+      impersonatorEmail: superAdminUser?.email || 'superadmin@xonit.space',
+    });
+
+    // Record this in the audit log for platform accountability
+    try {
+      await (prisma as any).auditLog.create({
+        data: {
+          tenantId: tenant.id,
+          userId: superAdminUser?.userId || superAdminUser?.id,
+          action: 'IMPERSONATE_TENANT_SESSION_START',
+          entity: 'Tenant',
+          entityId: tenant.id,
+          newData: {
+            impersonatorEmail: superAdminUser?.email,
+            targetUserId: targetUser.id,
+            targetUserEmail: targetUser.email,
+            tenantName: tenant.name,
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (auditErr) {
+      logger.warn('Failed to record audit log for impersonation', auditErr);
+    }
+
+    return {
+      accessToken,
+      user: {
+        id: targetUser.id,
+        email: targetUser.email,
+        name: targetUser.name,
+        phone: targetUser.phone,
+        status: targetUser.status,
+        tenantId: tenant.id,
+        tenant: {
+          id: tenant.id,
+          name: tenant.name,
+          slug: tenant.slug,
+          businessType: tenant.businessType,
+          subscriptionTier: tenant.subscriptionTier,
+        },
+        branchId: targetUser.branchId || tenant.branches?.[0]?.id || null,
+        branch: targetUser.branch || tenant.branches?.[0] || null,
+        roles: finalRoles,
+        permissions,
+        isImpersonated: true,
+        impersonator: {
+          id: superAdminUser?.userId || superAdminUser?.id,
+          email: superAdminUser?.email || 'superadmin@xonit.space',
+        },
+      },
+      redirectTo: '/admin',
     };
   }
 }

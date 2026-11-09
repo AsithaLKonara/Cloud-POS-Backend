@@ -11,6 +11,15 @@ export class SubscriptionController {
     }
   }
 
+  async createPlan(req: Request, res: Response): Promise<void> {
+    try {
+      const created = await SubscriptionService.createPlan(req.body);
+      res.status(201).json({ success: true, message: `Package "${created.name}" created successfully`, data: created });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to create plan' });
+    }
+  }
+
   async updatePlan(req: Request, res: Response): Promise<void> {
     try {
       const planKey = req.params.planKey as string;
@@ -18,6 +27,35 @@ export class SubscriptionController {
       res.status(200).json({ success: true, message: `Plan ${planKey} updated`, data: updated });
     } catch (err: any) {
       res.status(400).json({ success: false, message: err.message || 'Failed to update plan' });
+    }
+  }
+
+  async deletePlan(req: Request, res: Response): Promise<void> {
+    try {
+      const planKey = req.params.planKey as string;
+      const result = await SubscriptionService.deletePlan(planKey);
+      res.status(200).json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to delete plan' });
+    }
+  }
+
+  async assignPlan(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.params.tenantId as string;
+      const { planKey, billingCycle = 'MONTHLY', customPriceLkr } = req.body;
+      if (!planKey) {
+        res.status(400).json({ success: false, message: 'planKey is required.' });
+        return;
+      }
+      const result = await SubscriptionService.activateSubscription(tenantId, {
+        planKey: planKey.toUpperCase(),
+        billingCycle,
+        customMonthlyPriceLkr: customPriceLkr,
+      });
+      res.status(200).json({ success: true, message: `Tenant assigned to plan ${planKey}`, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message || 'Failed to assign plan' });
     }
   }
 

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { TenantService } from '../services/tenant.service';
+import { FeatureFlagService } from '../services/feature-flag.service';
 import prisma from '../config/prisma';
 
 export class TenantController {
@@ -200,9 +201,14 @@ export class TenantController {
         res.status(404).json({ success: false, message: 'Tenant not found.' });
         return;
       }
+      const entitlements = await FeatureFlagService.getTenantEntitlements(tenantId).catch(() => null);
       res.status(200).json({
         success: true,
-        data: tenant,
+        data: {
+          ...tenant,
+          entitlements: entitlements?.entitlements || [],
+          featureOverrides: entitlements?.overrides || {},
+        },
       });
     } catch (error: any) {
       res.status(500).json({

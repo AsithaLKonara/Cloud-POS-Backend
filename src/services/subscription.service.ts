@@ -7,6 +7,7 @@ export interface PlanConfig {
   key: string;
   name: string;
   badge?: string;
+  description?: string;
   monthlyLkr: number;
   quarterlyLkr: number; // 10% discount
   annualLkr: number; // 20% discount
@@ -14,6 +15,13 @@ export interface PlanConfig {
   maxUsers: number;
   trialDays: number;
   features: string[];
+  isPopular?: boolean;
+  isActive?: boolean;
+  color?: string; // 'blue' | 'emerald' | 'purple' | 'amber' | 'rose' | 'cyan'
+  subscriberCount?: number;
+  totalMrrLkr?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export const DEFAULT_PLANS: Record<string, PlanConfig> = {
@@ -21,6 +29,7 @@ export const DEFAULT_PLANS: Record<string, PlanConfig> = {
     key: 'STARTER',
     name: 'Starter Business',
     badge: 'Single Outlet',
+    description: 'Essential POS and inventory for individual stores and retail counters.',
     monthlyLkr: 4500,
     quarterlyLkr: 12150, // 10% off
     annualLkr: 43200, // 20% off
@@ -28,17 +37,20 @@ export const DEFAULT_PLANS: Record<string, PlanConfig> = {
     maxUsers: 2,
     trialDays: 14,
     features: [
-      'Modular Universal POS',
+      'Modular Universal POS Terminal',
       '80mm/58mm Thermal Receipt Printing',
       'Basic Inventory & Barcodes',
       'Cash & Card Payment Recording',
       '14-Day Full Access Trial',
     ],
+    isActive: true,
+    color: 'blue',
   },
   GROWTH: {
     key: 'GROWTH',
     name: 'Growth Store',
     badge: 'Most Popular',
+    description: 'Multi-outlet operations with table management, branch transfers and accounting.',
     monthlyLkr: 9500,
     quarterlyLkr: 25650, // 10% off
     annualLkr: 91200, // 20% off
@@ -54,11 +66,15 @@ export const DEFAULT_PLANS: Record<string, PlanConfig> = {
       'Full GAAP Canonical P&L Reporting',
       'LankaQR & Local Fintech Gateways',
     ],
+    isPopular: true,
+    isActive: true,
+    color: 'emerald',
   },
   ENTERPRISE: {
     key: 'ENTERPRISE',
     name: 'Enterprise Platform',
     badge: 'Unlimited Scale',
+    description: 'High-throughput multi-tenant retail, wholesale, and omnichannel networks.',
     monthlyLkr: 18500,
     quarterlyLkr: 49950, // 10% off
     annualLkr: 177600, // 20% off
@@ -71,35 +87,153 @@ export const DEFAULT_PLANS: Record<string, PlanConfig> = {
       'FEFO / FIFO Batch Lot Tracking & Expiry Alerts',
       'Moving Weighted Average Cost Purchase Orders',
       'Digital Scale RS-232 Continuous Integration',
+      'Headless Developer API & Storefront Webhooks',
       'Custom Courier Webhooks (Koombiyo, PromptX, Domex)',
       '24/7 Priority SLA & Dedicated Hardware Engineer',
     ],
+    isActive: true,
+    color: 'purple',
   },
 };
 
 export class SubscriptionService {
   /**
-   * Retrieves all subscription plans with dynamic Super Admin overrides if present.
+   * Retrieves all subscription plans with dynamic Super Admin overrides if present,
+   * injecting live subscriber counts and calculated MRR per tier.
    */
   static async getPlans(): Promise<PlanConfig[]> {
+    let plansMap: Record<string, PlanConfig> = { ...DEFAULT_PLANS };
+
     try {
-      const setting = await prisma.setting.findUnique({
-        where: { key: 'saas_subscription_plans' },
+      const setting = await prisma.setting.findFirst({
+        where: { key: { in: ['saas_subscription_plans', 'XONIT_SUBSCRIPTION_PLANS'] } },
       });
 
       if (setting && setting.value) {
         const customPlans = JSON.parse(setting.value);
-        return Object.values(customPlans);
+        if (customPlans && typeof customPlans === 'object') {
+          plansMap = { ...DEFAULT_PLANS, ...customPlans };
+        }
       }
     } catch (err: any) {
       logger.warn(`Could not load custom plan settings: ${err.message}`);
     }
 
-    return Object.values(DEFAULT_PLANS);
+    // Query active tenant distribution to inject subscriber metrics
+    try {
+      const tenants = await (prisma as any).tenant.findMany({
+        where: { status: { in: ['ACTIVE', 'TRIAL'] } },
+        select: { subscriptionTier: true, status: true },
+      });
+
+      const counts: Record<string, number> = {};
+      for (const t of tenants) {
+        const tier = (t.subscriptionTier || 'STARTER').toUpperCase();
+        counts[tier] = (counts[tier] || 0) + 1;
+      }
+
+      return Object.values(plansMap).map((plan) => {
+        const subs = counts[plan.key] || 0;
+        return {
+          ...plan,
+          subscriberCount: subs,
+          totalMrrLkr: subs * (plan.monthlyLkr || 0),
+          isActive: plan.isActive !== false,
+        };
+      });
+    } catch (e) {
+      return Object.values(plansMap);
+    }
   }
 
   /**
-   * Super Admin: Update pricing, quotas, or features for a subscription plan.
+   * Super Admin: Create a brand new subscription package.
+   */
+  static async createPlan(data: Partial<PlanConfig>): Promise<PlanConfig> {
+    if (!data.name || typeof data.name !== 'string') {
+      throw new Error('Package name is required.');
+    }
+
+    const monthlyLkr = Number(data.monthlyLkr);
+    if (isNaN(monthlyLkr) || monthlyLkr <= 0) {
+      throw new Error('A valid positive monthly price in LKR is required.');
+    }
+
+    // Generate or format uppercase key
+    const rawKey = data.key || data.name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const key = rawKey.toUpperCase().trim();
+
+    const existingPlans = await this.getPlans();
+    if (existingPlans.some((p) => p.key === key)) {
+      throw new Error(`A package with key "${key}" already exists.`);
+    }
+
+    const quarterlyLkr = data.quarterlyLkr || Math.round(monthlyLkr * 3 * 0.9);
+    const annualLkr = data.annualLkr || Math.round(monthlyLkr * 12 * 0.8);
+
+    const newPlan: PlanConfig = {
+      key,
+      name: data.name.trim(),
+      badge: data.badge?.trim() || undefined,
+      description: data.description?.trim() || undefined,
+      monthlyLkr,
+      quarterlyLkr,
+      annualLkr,
+      maxBranches: typeof data.maxBranches === 'number' ? data.maxBranches : 1,
+      maxUsers: typeof data.maxUsers === 'number' ? data.maxUsers : 5,
+      trialDays: typeof data.trialDays === 'number' ? data.trialDays : 14,
+      features: Array.isArray(data.features) && data.features.length > 0
+        ? data.features.filter((f) => typeof f === 'string' && f.trim().length > 0)
+        : ['Modular Universal POS', 'Thermal Receipts', 'Inventory Tracking'],
+      isPopular: Boolean(data.isPopular),
+      isActive: data.isActive !== false,
+      color: data.color || 'blue',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const planMap: Record<string, PlanConfig> = {};
+    for (const p of existingPlans) {
+      planMap[p.key] = p;
+    }
+    planMap[key] = newPlan;
+
+    // Persist to database setting
+    await prisma.setting.upsert({
+      where: { key: 'saas_subscription_plans' },
+      create: {
+        key: 'saas_subscription_plans',
+        value: JSON.stringify(planMap),
+        type: 'json',
+        group: 'billing',
+        isPublic: true,
+      },
+      update: {
+        value: JSON.stringify(planMap),
+      },
+    });
+
+    // Sync legacy key
+    await prisma.setting.upsert({
+      where: { key: 'XONIT_SUBSCRIPTION_PLANS' },
+      create: {
+        key: 'XONIT_SUBSCRIPTION_PLANS',
+        value: JSON.stringify(planMap),
+        type: 'json',
+        group: 'billing',
+        isPublic: true,
+      },
+      update: {
+        value: JSON.stringify(planMap),
+      },
+    }).catch(() => {});
+
+    logger.info(`Super Admin created new subscription package [${key}] - Rs. ${monthlyLkr}/mo`);
+    return newPlan;
+  }
+
+  /**
+   * Super Admin: Update full configuration, quotas, pricing, or features for any plan.
    */
   static async updatePlanPricing(planKey: string, updates: Partial<PlanConfig>): Promise<PlanConfig> {
     const key = planKey.toUpperCase();
@@ -113,19 +247,33 @@ export class SubscriptionService {
       throw new Error(`Plan with key "${planKey}" does not exist.`);
     }
 
+    const current = planMap[key]!;
+    const monthlyLkr = updates.monthlyLkr !== undefined ? Number(updates.monthlyLkr) : current.monthlyLkr;
+    const quarterlyLkr = updates.quarterlyLkr !== undefined
+      ? Number(updates.quarterlyLkr)
+      : (updates.monthlyLkr ? Math.round(monthlyLkr * 3 * 0.9) : current.quarterlyLkr);
+    const annualLkr = updates.annualLkr !== undefined
+      ? Number(updates.annualLkr)
+      : (updates.monthlyLkr ? Math.round(monthlyLkr * 12 * 0.8) : current.annualLkr);
+
     const updatedPlan: PlanConfig = {
-      ...planMap[key],
-      ...updates,
+      ...current,
+      name: updates.name ? updates.name.trim() : current.name,
+      badge: updates.badge !== undefined ? (updates.badge?.trim() || undefined) : current.badge,
+      description: updates.description !== undefined ? (updates.description?.trim() || undefined) : current.description,
+      monthlyLkr,
+      quarterlyLkr,
+      annualLkr,
+      maxBranches: typeof updates.maxBranches === 'number' ? updates.maxBranches : current.maxBranches,
+      maxUsers: typeof updates.maxUsers === 'number' ? updates.maxUsers : current.maxUsers,
+      trialDays: typeof updates.trialDays === 'number' ? updates.trialDays : current.trialDays,
+      features: Array.isArray(updates.features) ? updates.features.filter(Boolean) : current.features,
+      isPopular: updates.isPopular !== undefined ? Boolean(updates.isPopular) : current.isPopular,
+      isActive: updates.isActive !== undefined ? Boolean(updates.isActive) : current.isActive !== false,
+      color: updates.color || current.color || 'blue',
+      updatedAt: new Date().toISOString(),
       key, // preserve key
     };
-
-    // Auto-calculate discount tiers if only monthlyLkr changed
-    if (updates.monthlyLkr && !updates.quarterlyLkr) {
-      updatedPlan.quarterlyLkr = Math.round(updates.monthlyLkr * 3 * 0.9);
-    }
-    if (updates.monthlyLkr && !updates.annualLkr) {
-      updatedPlan.annualLkr = Math.round(updates.monthlyLkr * 12 * 0.8);
-    }
 
     planMap[key] = updatedPlan;
 
@@ -144,8 +292,86 @@ export class SubscriptionService {
       },
     });
 
-    logger.info(`Super Admin updated plan pricing for [${key}]`);
+    await prisma.setting.upsert({
+      where: { key: 'XONIT_SUBSCRIPTION_PLANS' },
+      create: {
+        key: 'XONIT_SUBSCRIPTION_PLANS',
+        value: JSON.stringify(planMap),
+        type: 'json',
+        group: 'billing',
+        isPublic: true,
+      },
+      update: {
+        value: JSON.stringify(planMap),
+      },
+    }).catch(() => {});
+
+    logger.info(`Super Admin updated package [${key}]`);
     return updatedPlan;
+  }
+
+  /**
+   * Super Admin: Delete or soft-archive a subscription package.
+   */
+  static async deletePlan(planKey: string): Promise<{ deleted: boolean; archived: boolean; message: string }> {
+    const key = planKey.toUpperCase();
+    const plans = await this.getPlans();
+    const planMap: Record<string, PlanConfig> = {};
+    for (const p of plans) {
+      planMap[p.key] = p;
+    }
+
+    if (!planMap[key]) {
+      throw new Error(`Plan with key "${planKey}" does not exist.`);
+    }
+
+    // Check if tenants are currently assigned to this tier
+    const activeSubscribers = await (prisma as any).tenant.count({
+      where: { subscriptionTier: key },
+    });
+
+    if (activeSubscribers > 0) {
+      // Soft-archive: Mark inactive to preserve existing tenant access while hiding from new signups
+      planMap[key] = {
+        ...planMap[key]!,
+        isActive: false,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await prisma.setting.upsert({
+        where: { key: 'saas_subscription_plans' },
+        create: { key: 'saas_subscription_plans', value: JSON.stringify(planMap), type: 'json' },
+        update: { value: JSON.stringify(planMap) },
+      });
+
+      return {
+        deleted: false,
+        archived: true,
+        message: `Package "${key}" has ${activeSubscribers} active tenant(s). It has been archived and hidden rather than permanently deleted.`,
+      };
+    }
+
+    // No active tenants: Safe to remove
+    delete planMap[key];
+
+    await prisma.setting.upsert({
+      where: { key: 'saas_subscription_plans' },
+      create: { key: 'saas_subscription_plans', value: JSON.stringify(planMap), type: 'json' },
+      update: { value: JSON.stringify(planMap) },
+    });
+
+    await prisma.setting.upsert({
+      where: { key: 'XONIT_SUBSCRIPTION_PLANS' },
+      create: { key: 'XONIT_SUBSCRIPTION_PLANS', value: JSON.stringify(planMap), type: 'json' },
+      update: { value: JSON.stringify(planMap) },
+    }).catch(() => {});
+
+    logger.info(`Super Admin deleted package [${key}]`);
+    return {
+      deleted: true,
+      archived: false,
+      message: `Package "${key}" has been permanently removed.`,
+    };
   }
 
   /**
