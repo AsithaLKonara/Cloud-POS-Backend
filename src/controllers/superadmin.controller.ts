@@ -9,6 +9,7 @@ import { SuperAdminAuditService } from '../services/superadmin-audit.service';
 import { DunningService } from '../services/dunning.service';
 import { AnnouncementService } from '../services/announcement.service';
 import { DisasterRecoveryService } from '../services/disaster-recovery.service';
+import { SuperAdminWhatsAppService } from '../services/superadmin-whatsapp.service';
 
 export class SuperAdminController {
   async getKPIs(req: Request, res: Response): Promise<void> {
@@ -699,6 +700,133 @@ export class SuperAdminController {
       res.status(200).json({ success: true, data: stats });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message || 'Failed to fetch storage statistics' });
+    }
+  }
+
+  // --- WhatsApp Platform Gateway & Telemetry ---
+  async getWhatsAppTelemetry(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await SuperAdminWhatsAppService.getClusterTelemetry();
+      res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to aggregate WhatsApp telemetry' });
+    }
+  }
+
+  async getWhatsAppTenants(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await SuperAdminWhatsAppService.getTenantIntegrations();
+      res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch WhatsApp tenant list' });
+    }
+  }
+
+  async broadcastWhatsAppNotice(req: Request, res: Response): Promise<void> {
+    try {
+      const { title, message, targetTier } = req.body;
+      if (!title || !message) {
+        res.status(400).json({ success: false, message: 'Title and message are required' });
+        return;
+      }
+      const result = await SuperAdminWhatsAppService.broadcastPlatformNotice({ title, message, targetTier });
+      res.status(200).json({ success: true, message: `Dispatched alert to ${result.dispatchedCount} tenant merchant owners`, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to broadcast WhatsApp notice' });
+    }
+  }
+
+  async getWhatsAppAiGovernance(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await SuperAdminWhatsAppService.getAiSalesGovernance();
+      res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch AI sales governance' });
+    }
+  }
+
+  async updateWhatsAppAiGovernance(req: Request, res: Response): Promise<void> {
+    try {
+      const updated = await SuperAdminWhatsAppService.updateAiSalesGovernance(req.body);
+      res.status(200).json({ success: true, message: 'AI Sales Agent governance settings updated', data: updated });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to update AI sales governance' });
+    }
+  }
+
+  async simulateWhatsAppAiAgent(req: Request, res: Response): Promise<void> {
+    try {
+      const { message, tenantId } = req.body;
+      if (!message) {
+        res.status(400).json({ success: false, message: 'Message is required for AI simulation' });
+        return;
+      }
+      const result = await SuperAdminWhatsAppService.simulateAiSalesAgent(message, tenantId);
+      res.status(200).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to run AI simulation' });
+    }
+  }
+
+  async getWhatsAppCampaigns(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await SuperAdminWhatsAppService.getCampaignTelemetry();
+      res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch campaign telemetry' });
+    }
+  }
+
+  async triggerWhatsAppCampaign(req: Request, res: Response): Promise<void> {
+    try {
+      const { campaignType } = req.body;
+      if (!campaignType) {
+        res.status(400).json({ success: false, message: 'campaignType is required' });
+        return;
+      }
+      const result = await SuperAdminWhatsAppService.triggerCampaign(campaignType);
+      res.status(200).json({
+        success: true,
+        message: `Successfully executed ${campaignType}: Dispatched ${result.dispatchedCount} recovery messages (${result.scannedCount} scanned).`,
+        data: result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to execute campaign' });
+    }
+  }
+
+  async getWhatsAppThreads(req: Request, res: Response): Promise<void> {
+    try {
+      const tenantId = req.query.tenantId as string;
+      const search = req.query.search as string;
+      const threads = await SuperAdminWhatsAppService.getCrossTenantThreads(tenantId, search);
+      res.status(200).json({ success: true, data: threads });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch cross-tenant threads' });
+    }
+  }
+
+  async getWhatsAppThreadDetails(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId, phone } = req.params;
+      const data = await SuperAdminWhatsAppService.getThreadMessages(tenantId as string, phone as string);
+      res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to fetch thread messages' });
+    }
+  }
+
+  async sendWhatsAppIntervention(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId, phone, text } = req.body;
+      if (!tenantId || !phone || !text) {
+        res.status(400).json({ success: false, message: 'tenantId, phone, and text are required' });
+        return;
+      }
+      const result = await SuperAdminWhatsAppService.sendInterventionMessage(tenantId, phone, text);
+      res.status(200).json({ success: true, message: 'Intervention message dispatched', data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Failed to dispatch intervention' });
     }
   }
 }

@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { auditDigestService } from '../services/auditDigest.service';
 import { dbBackupService } from './dbBackup';
 import { SubscriptionService } from '../services/subscription.service';
+import { WhatsAppCampaignEngineService } from '../services/whatsapp-campaign-engine.service';
 import { logger } from '../utils/logger';
 
 const PENTEST_REMINDER_MESSAGE = [
@@ -74,5 +75,26 @@ export function registerScheduledJobs() {
     }
   }, { timezone: 'UTC' });
 
-  logger.info('[Scheduler] Registered jobs: [weekly-audit-digest @ Monday 08:00], [quarterly-pentest-reminder x4], [daily-db-backup @ 02:00 UTC], [daily-saas-dunning @ 04:00 UTC]');
+  // WhatsApp Autonomous Cart Recovery — Every 2 hours (0 */2 * * *)
+  cron.schedule('0 */2 * * *', async () => {
+    logger.info('[Scheduler] Running WhatsApp Cart Abandonment Recovery Scan...');
+    try {
+      await WhatsAppCampaignEngineService.runCartAbandonmentRecovery();
+    } catch (err) {
+      logger.error('[Scheduler] WhatsApp Cart Recovery failed:', err);
+    }
+  }, { timezone: 'UTC' });
+
+  // WhatsApp Proactive Replenishment & AR Overdue Dunning — Daily at 09:00 UTC
+  cron.schedule('0 9 * * *', async () => {
+    logger.info('[Scheduler] Running WhatsApp Proactive Replenishment & AR Dunning...');
+    try {
+      await WhatsAppCampaignEngineService.runPredictiveReplenishment();
+      await WhatsAppCampaignEngineService.runSmartArDunning();
+    } catch (err) {
+      logger.error('[Scheduler] WhatsApp Daily Marketing/AR Campaign failed:', err);
+    }
+  }, { timezone: 'UTC' });
+
+  logger.info('[Scheduler] Registered jobs: [weekly-audit-digest @ Monday 08:00], [quarterly-pentest-reminder x4], [daily-db-backup @ 02:00 UTC], [daily-saas-dunning @ 04:00 UTC], [wa-cart-recovery @ every 2h], [wa-reorder-dunning @ 09:00 UTC]');
 }

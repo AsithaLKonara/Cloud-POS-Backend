@@ -76,4 +76,17 @@ router.delete('/backups/:filename', (req, res) => controller.deleteBackup(req, r
 router.get('/backups/:filename/download', (req, res) => controller.downloadBackup(req, res));
 router.get('/storage/stats', (req, res) => controller.getStorageStats(req, res));
 
+// WhatsApp Platform Gateway, Telemetry, Broadcast, AI Sales Agent & Outbound Campaigns
+router.get('/whatsapp/telemetry', (req, res) => controller.getWhatsAppTelemetry(req, res));
+router.get('/whatsapp/tenants', (req, res) => controller.getWhatsAppTenants(req, res));
+router.post('/whatsapp/broadcast', (req, res) => controller.broadcastWhatsAppNotice(req, res));
+router.get('/whatsapp/ai-governance', (req, res) => controller.getWhatsAppAiGovernance(req, res));
+router.put('/whatsapp/ai-governance', (req, res) => controller.updateWhatsAppAiGovernance(req, res));
+router.post('/whatsapp/ai-simulate', (req, res) => controller.simulateWhatsAppAiAgent(req, res));
+router.get('/whatsapp/campaigns', (req, res) => controller.getWhatsAppCampaigns(req, res));
+router.post('/whatsapp/campaigns/trigger', (req, res) => controller.triggerWhatsAppCampaign(req, res));
+router.get('/whatsapp/threads', (req, res) => controller.getWhatsAppThreads(req, res));
+router.get('/whatsapp/threads/:tenantId/:phone', (req, res) => controller.getWhatsAppThreadDetails(req, res));
+router.post('/whatsapp/threads/reply', (req, res) => controller.sendWhatsAppIntervention(req, res));
+
 export default router;

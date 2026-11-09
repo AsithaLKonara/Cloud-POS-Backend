@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 import { WhatsAppService } from './whatsapp.service';
 import { TenantIntegrationService } from './tenant-integration.service';
 import { AiRagService } from './ai-rag.service';
+import { WhatsAppAgentToolsService } from './whatsapp-agent-tools.service';
 
 export interface InboundMessageContext {
   fromPhone: string;
@@ -169,19 +170,57 @@ export class WhatsAppWebhookService {
       return;
     }
 
-    // Conversational Intelligence via Gemini AI Copilot & Knowledge Base
+    // 1. Retrieve Recent Multi-Turn Chat History from WhatsAppMessage table
+    let history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    try {
+      const recentLogs = await (prisma as any).whatsAppMessage.findMany({
+        where: {
+          tenantId,
+          phone: fromPhone,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      history = recentLogs
+        .reverse()
+        .map((m: any) => ({
+          role: m.direction === 'INBOUND' ? ('user' as const) : ('assistant' as const),
+          content: m.content || '',
+        }));
+    } catch (histErr: any) {
+      logger.warn(`[WhatsApp Inbound] Could not fetch recent history: ${histErr.message}`);
+    }
+
+    // 2. Autonomous Agentic AI Copilot & Tool Calling Engine
     try {
       const tenant = await (prisma as any).tenant.findUnique({ where: { id: tenantId } });
       const storeName = tenant?.name || 'our store';
 
-      // Use AI RAG to answer stock, branch hours, or order questions
-      const aiReply = await AiRagService.answerQuestion({
-        tenantId,
+      // First evaluate via Agent Tools (check stock, place order, payment links, staff escalation)
+      const agentResult = await WhatsAppAgentToolsService.simulateAgentConversation({
         message: incomingText,
-        history: [],
+        tenantId,
+        history,
       });
 
-      const replyContent = aiReply?.answer || `Thank you for reaching out to ${storeName}! A customer service representative will respond shortly.`;
+      let replyContent = agentResult?.answer;
+
+      // If no specific tools were triggered and it's a knowledge/policy query, fall back to RAG
+      if (!agentResult.toolCallsExecuted || agentResult.toolCallsExecuted.length === 0) {
+        const ragResult = await AiRagService.answerQuestion({
+          tenantId,
+          message: incomingText,
+          history,
+        });
+        if (ragResult?.answer) {
+          replyContent = ragResult.answer;
+        }
+      }
+
+      if (!replyContent) {
+        replyContent = `Thank you for reaching out to ${storeName}! A customer service representative will respond shortly.`;
+      }
 
       await WhatsAppService.sendMessage(tenantId, fromPhone, {
         type: 'text',
