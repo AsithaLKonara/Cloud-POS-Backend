@@ -155,4 +155,34 @@ describe('Task 2: Highest Automated Sales Agent & Gemini Tool Calling', () => {
       maxAutoDiscountPercent: DEFAULT_AI_GOVERNANCE.maxAutoDiscountPercent,
     });
   });
+
+  it('7. should execute checkWarrantyAndClaim tool for active serial number', async () => {
+    const existingSerial = await (prisma as any).productSerial.findFirst();
+    const testSerial = existingSerial ? existingSerial.serialNumber : 'SN-TEST-123';
+    const tenantIdToUse = existingSerial ? existingSerial.tenantId : testTenantId;
+
+    const warrRes = await WhatsAppAgentToolsService.checkWarrantyAndClaim(tenantIdToUse, {
+      serialNumber: testSerial,
+      action: 'check',
+    });
+
+    expect(warrRes).toBeDefined();
+    expect(warrRes.found).toBe(true);
+    expect(warrRes.message).toContain('Warranty Verification Certificate');
+  });
+
+  it('8. should execute simulateAgentConversation with warranty claim intent', async () => {
+    const existingSerial = await (prisma as any).productSerial.findFirst();
+    const testSerial = existingSerial ? existingSerial.serialNumber : 'SN-TEST-123';
+    const tenantIdToUse = existingSerial ? existingSerial.tenantId : testTenantId;
+
+    const simRes = await WhatsAppAgentToolsService.simulateAgentConversation({
+      message: `My device screen has vertical lines, serial is ${testSerial}, please claim warranty`,
+      tenantId: tenantIdToUse,
+    });
+
+    expect(simRes.answer).toBeDefined();
+    expect(simRes.toolCallsExecuted.some(t => t.tool === 'check_warranty_and_claim')).toBe(true);
+    expect(simRes.answer).toContain('Warranty Verification Certificate');
+  });
 });

@@ -40,3 +40,4 @@ describe('SuperAdmin WhatsApp Platform Gateway & Hub', () => {
     expect(Array.isArray(broadcastResult.recipients)).toBe(true);
   });
 });
+

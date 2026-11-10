@@ -522,11 +522,14 @@ export const posService = {
         const price = variant.salePrice ?? variant.price;
         calculatedSubtotal += price * item.qty;
 
+        const serialNum = item.serialNumber || (Array.isArray(item.serialNumbers) ? item.serialNumbers[0] : null);
+
         orderItems.push({
           variantId: vId,
           quantity: item.qty,
           priceAtPurchase: price,
-          costPriceAtPurchase: variant.costPrice ?? 0
+          costPriceAtPurchase: variant.costPrice ?? 0,
+          notes: serialNum ? `SN: ${serialNum}` : item.notes
         });
       }
 
@@ -553,8 +556,68 @@ export const posService = {
           items: {
             create: orderItems
           }
+        },
+        include: {
+          items: true
         }
       });
+
+      // 2.5 Bind Serial Numbers & Activate Warranties
+      if (branch.tenantId) {
+        for (const item of data.items) {
+          const serialNum = item.serialNumber || (Array.isArray(item.serialNumbers) ? item.serialNumbers[0] : null);
+          if (serialNum) {
+            const vId = item.variantId || item.id;
+            const createdItem = order.items.find(oi => oi.variantId === vId);
+            if (createdItem) {
+              const variant = await tx.productVariant.findUnique({
+                where: { id: vId },
+                include: { product: true }
+              });
+
+              const warrantyMonths = variant?.product?.warrantyPeriodMonths || 0;
+              const purchaseDate = new Date();
+              const warrantyExpiresAt = new Date(purchaseDate);
+              if (warrantyMonths > 0) {
+                warrantyExpiresAt.setMonth(warrantyExpiresAt.getMonth() + warrantyMonths);
+              }
+
+              const cleanSerial = String(serialNum).trim();
+              const existingSerial = await tx.productSerial.findFirst({
+                where: {
+                  tenantId: branch.tenantId,
+                  serialNumber: cleanSerial
+                }
+              });
+
+              if (existingSerial) {
+                await tx.productSerial.update({
+                  where: { id: existingSerial.id },
+                  data: {
+                    status: 'SOLD',
+                    orderItemId: createdItem.id,
+                    purchaseDate,
+                    warrantyExpiresAt: warrantyMonths > 0 ? warrantyExpiresAt : null
+                  }
+                });
+              } else {
+                await tx.productSerial.create({
+                  data: {
+                    tenantId: branch.tenantId,
+                    variantId: vId,
+                    branchId: branch.id,
+                    orderItemId: createdItem.id,
+                    serialNumber: cleanSerial,
+                    status: 'SOLD',
+                    purchaseDate,
+                    warrantyExpiresAt: warrantyMonths > 0 ? warrantyExpiresAt : null
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
       
       // 3. Update Vouchers
       if (validVouchers.length > 0) {

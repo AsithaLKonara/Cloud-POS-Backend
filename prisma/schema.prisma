@@ -63,6 +63,8 @@ model Tenant {
   webhookEndpoints       TenantWebhookEndpoint[]
   roles                  Role[]
   whatsAppMessages       WhatsAppMessage[]
+  productSerials         ProductSerial[]
+  warrantyClaims         WarrantyClaim[]
 
   @@index([slug])
   @@index([status])
@@ -135,6 +137,8 @@ model Product {
   apiStandard       String?             // e.g. API SP, ILSAC GF-6, ACEA C3, JASO MA2
   partNumber        String?             // e.g. OEM / Part # for filters, batteries, plugs
   compatibleVehicles String?            // e.g. Applicable vehicle models/engines
+  warrantyPeriodMonths Int               @default(0) // 0 = no warranty, 6 = 6 months, 12 = 1 year, etc.
+  warrantyPolicy    String?             // Warranty terms description
   collections       CollectionProduct[]
   category          Category?           @relation(fields: [categoryId], references: [id])
   variants          ProductVariant[]
@@ -170,6 +174,7 @@ model ProductVariant {
   size               String?
   featuredImage      String?
   gallery            String[]
+  hasSerialTracking  Boolean                @default(false)
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
   cartItems          CartItem[]
@@ -182,6 +187,8 @@ model ProductVariant {
   returnItems        ReturnItem[]
   purchaseOrderItems PurchaseOrderItem[]
   inventoryBatches   InventoryBatch[]
+  serials            ProductSerial[]
+  warrantyClaims     WarrantyClaim[]
 
   @@index([productId])
 }
@@ -212,6 +219,8 @@ model Branch {
   diningTables DiningTable[]
   purchaseOrders   PurchaseOrder[]
   inventoryBatches InventoryBatch[]
+  productSerials   ProductSerial[]
+  warrantyClaims   WarrantyClaim[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -563,6 +572,7 @@ model Customer {
   wishlist           Wishlist?
   creditTransactions CustomerCreditLedger[]
   whatsAppMessages   WhatsAppMessage[]
+  warrantyClaims     WarrantyClaim[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -674,6 +684,7 @@ model Order {
   items               OrderItem[]
   payments            PaymentTransaction[]
   returnRequests      ReturnRequest[]
+  warrantyClaims      WarrantyClaim[]
 
   @@unique([tenantId, orderNumber])
   @@index([status, createdAt])
@@ -699,6 +710,7 @@ model OrderItem {
   order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant             ProductVariant @relation(fields: [variantId], references: [id])
   returnItems         ReturnItem[]
+  productSerials      ProductSerial[]
 
   @@index([orderId])
   @@index([variantId])
@@ -1374,4 +1386,99 @@ model WhatsAppMessage {
   @@index([tenantId, phone])
   @@index([tenantId, createdAt])
 }
+
+model ProductSerial {
+  id                 String          @id @default(uuid())
+  tenantId           String
+  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId           String?
+  branch             Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  variantId          String
+  variant            ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  orderItemId        String?
+  orderItem          OrderItem?      @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  serialNumber       String
+  imei               String?
+  batchNumber        String?
+  status             String          @default("IN_STOCK") // IN_STOCK, SOLD, UNDER_WARRANTY, DEFECTIVE, REPLACED, RETURNED
+  purchaseDate       DateTime?
+  warrantyExpiresAt  DateTime?
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  claims             WarrantyClaim[]
+
+  @@unique([tenantId, serialNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, serialNumber])
+  @@index([tenantId, imei])
+  @@index([variantId])
+  @@index([orderItemId])
+}
+
+model WarrantyClaim {
+  id                 String              @id @default(uuid())
+  claimNumber        String              @unique // e.g. CLM-10001
+  tenantId           String
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId           String?
+  branch             Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  customerId         String?
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  orderId            String?
+  order              Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  variantId          String?
+  variant            ProductVariant?     @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  productSerialId    String?
+  productSerial      ProductSerial?      @relation(fields: [productSerialId], references: [id], onDelete: SetNull)
+
+  // Snapshot info in case customer or serial is walk-in
+  customerName       String
+  customerPhone      String
+  customerEmail      String?
+  serialNumber       String
+  productName        String
+
+  issueDescription   String
+  accessoryNotes     String?             // e.g. "Provided with power brick and original box"
+  diagnosticNotes    String?             // Technician initial diagnosis
+  technicianNotes    String?             // Ongoing repair log
+  technicianName     String?
+
+  status             String              @default("RECEIVED") // RECEIVED, IN_DIAGNOSIS, AWAITING_PARTS, SENT_TO_VENDOR, REPAIRED, REPLACED, REJECTED, CLOSED
+  resolutionType     String?             // REPAIRED, REPLACED_FROM_STOCK, SUPPLIER_REPLACEMENT, REFUNDED, REJECTED
+  replacementSerial  String?             // New serial if replaced
+
+  repairCost         Float               @default(0) // Internal parts & labor cost
+  customerCharge     Float               @default(0) // Charge to customer if non-warranty or accidental damage
+
+  receivedAt         DateTime            @default(now())
+  completedAt        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  logs               WarrantyClaimLog[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, serialNumber])
+  @@index([tenantId, customerPhone])
+  @@index([claimNumber])
+  @@index([customerId])
+  @@index([orderId])
+}
+
+model WarrantyClaimLog {
+  id                 String         @id @default(uuid())
+  claimId            String
+  claim              WarrantyClaim  @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  action             String         // STATUS_CHANGE, DIAGNOSIS_UPDATED, PART_REPLACED, SENT_TO_VENDOR, VENDOR_RETURNED, NOTE_ADDED
+  fromStatus         String?
+  toStatus           String?
+  note               String?
+  performedBy        String?        // Staff/technician name or email
+  createdAt          DateTime       @default(now())
+
+  @@index([claimId])
+}
+
 

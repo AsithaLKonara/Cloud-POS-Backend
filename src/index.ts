@@ -57,6 +57,7 @@ import systemRoutes from "./routes/system.routes";
 import uploadRoutes from "./routes/upload.routes";
 import erpRoutes from "./routes/erp.routes";
 import aiRoutes from "./routes/ai.routes";
+import warrantyRoutes from "./routes/warranty.routes";
 import path from "path";
 import fs from "fs";
 import { RoleService } from "./services/role.service";
@@ -216,6 +217,7 @@ app.use(`${API_PREFIX}/announcements`, announcementRoutes);
 app.use(`${API_PREFIX}/system`, systemRoutes);
 app.use(`${API_PREFIX}/erp`, erpRoutes);
 app.use(`${API_PREFIX}/ai`, aiRoutes);
+app.use(`${API_PREFIX}/warranty`, warrantyRoutes);
 app.use(`${API_PREFIX}/upload`, uploadRoutes);
 app.use('/upload', uploadRoutes);
 

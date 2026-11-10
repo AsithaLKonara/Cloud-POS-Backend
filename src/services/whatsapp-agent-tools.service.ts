@@ -1,5 +1,6 @@
 import prisma from '../config/prisma';
 import { logger } from '../utils/logger';
+import { WarrantyService } from './warranty.service';
 
 export interface ToolStockResult {
   found: boolean;
@@ -54,6 +55,7 @@ export const DEFAULT_AI_GOVERNANCE: AiGovernanceSettings = {
     'create_whatsapp_order',
     'generate_payment_link',
     'escalate_to_staff',
+    'check_warranty_and_claim',
   ],
 };
 
@@ -328,6 +330,85 @@ export class WhatsAppAgentToolsService {
   }
 
   /**
+   * Tool 5: Check Warranty & File RMA Claim
+   */
+  static async checkWarrantyAndClaim(
+    tenantId: string,
+    params: {
+      serialNumber?: string;
+      imei?: string;
+      orderNumber?: string;
+      phone?: string;
+      action?: 'check' | 'claim';
+      customerName?: string;
+      issueDescription?: string;
+    }
+  ) {
+    try {
+      const { serialNumber, imei, orderNumber, phone, action = 'check', customerName, issueDescription } = params;
+
+      const lookup = await WarrantyService.checkWarrantyStatus(tenantId, {
+        serialNumber,
+        imei,
+        orderNumber,
+        phone,
+      });
+
+      if (!lookup.found) {
+        return {
+          found: false,
+          isCovered: false,
+          message: `🔍 No active warranty record found for serial/order "${serialNumber || orderNumber || phone}". Please double check your invoice or contact our service desk.`,
+        };
+      }
+
+      // If customer requested to file a claim and provided defect info
+      let claimCreated: any = null;
+      if (action === 'claim' && issueDescription) {
+        claimCreated = await WarrantyService.createClaim(tenantId, {
+          serialNumber: lookup.serialNumber || serialNumber || 'UNKNOWN',
+          customerName: customerName || lookup.customer?.name || 'WhatsApp Customer',
+          customerPhone: phone || lookup.customer?.phone || '0771234567',
+          issueDescription,
+          productVariantId: lookup.product?.variantId,
+          orderId: lookup.order?.id,
+          customerId: lookup.customer?.id,
+        });
+      }
+
+      let message = `🛡️ **Warranty Verification Certificate**\n\n` +
+        `• **Product**: ${lookup.product?.name || 'Serialized Hardware'}\n` +
+        `• **Serial #**: ${lookup.serialNumber || 'N/A'}\n` +
+        `• **Status**: ${lookup.isValidWarranty ? '✅ ACTIVE COVERAGE' : '⚠️ EXPIRED / OUT OF WARRANTY'}\n` +
+        `• **Remaining**: ${lookup.daysRemaining ?? 0} days\n` +
+        `• **Policy**: ${lookup.warrantyPolicy || 'Standard Manufacturer Warranty'}\n`;
+
+      if (claimCreated) {
+        message += `\n📋 **Service RMA Ticket Opened!**\n` +
+          `• **Ticket #**: ${claimCreated.claimNumber}\n` +
+          `• **Status**: RECEIVED (Pending Intake Inspection)\n` +
+          `• **Reported Defect**: ${issueDescription}\n\n` +
+          `You may drop off the device at any of our branches or our courier can collect it. Show ticket #${claimCreated.claimNumber} upon handoff.`;
+      } else if (lookup.isValidWarranty) {
+        message += `\nNeed to claim warranty or request repair? Simply reply with your issue (e.g., *"My TV screen has a green line, claim warranty"*).`;
+      }
+
+      return {
+        found: true,
+        isCovered: lookup.isValidWarranty,
+        daysRemaining: lookup.daysRemaining,
+        serialNumber: lookup.serialNumber,
+        productName: lookup.product?.name,
+        claim: claimCreated,
+        message,
+      };
+    } catch (err: any) {
+      logger.error(`[Agent Tool checkWarrantyAndClaim Error]: ${err.message}`);
+      return { found: false, isCovered: false, message: `Warranty check failed: ${err.message}` };
+    }
+  }
+
+  /**
    * AI Governance Settings
    */
   static async getAiGovernanceSettings(): Promise<AiGovernanceSettings> {
@@ -490,6 +571,29 @@ export class WhatsAppAgentToolsService {
         result: escRes,
       });
       return { answer: escRes.message, toolCallsExecuted };
+    }
+
+    // Check intent: Warranty & Repair RMA
+    if (lower.includes('warranty') || lower.includes('guarantee') || lower.includes('claim') || lower.includes('repair') || lower.includes('defect') || lower.includes('broken')) {
+      const serialMatch = cleanMsg.match(/SN-[A-Za-z0-9-]+/i) || cleanMsg.match(/[A-Za-z0-9]{6,25}/);
+      const extractedSerial = serialMatch ? serialMatch[0] : 'SN-WARR';
+      const isClaimIntent = lower.includes('claim') || lower.includes('broken') || lower.includes('defect') || lower.includes('not working') || lower.includes('repair');
+
+      const warrRes = await this.checkWarrantyAndClaim(activeTenantId, {
+        serialNumber: extractedSerial,
+        action: isClaimIntent ? 'claim' : 'check',
+        issueDescription: isClaimIntent ? cleanMsg : undefined,
+        customerName: 'Valued Customer',
+        phone: '0771234567',
+      });
+
+      toolCallsExecuted.push({
+        tool: 'check_warranty_and_claim',
+        params: { serialNumber: extractedSerial, action: isClaimIntent ? 'claim' : 'check' },
+        result: warrRes,
+      });
+
+      return { answer: warrRes.message, toolCallsExecuted };
     }
 
     // General FAQ fallback with friendly conversational tone
