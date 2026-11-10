@@ -59,6 +59,40 @@ describe('Customer Pole Display Protocol & Text Formatting Engine', () => {
     const l1 = 'XONIT FLAGSHIP STORE';
     const l2 = 'WELCOME TO OUR SHOP!';
 
+    it('generates compliant Price Display (ESC Q A) LED8 byte sequences', () => {
+      // Test item scan with Price indicator
+      const itemBuffer = HardwareService.buildPoleDisplayBuffer('Ceylon Tea 750.00', 'QTY:1 SUB:750', 'PRICE_DISPLAY');
+      expect(itemBuffer).toBeInstanceOf(Buffer);
+
+      // Verify Clear (0x0C)
+      expect(itemBuffer[0]).toBe(0x0c);
+      // Verify ESC s 1 (Price lamp ON: 0x1B, 0x73, 0x31)
+      expect(itemBuffer[1]).toBe(0x1b);
+      expect(itemBuffer[2]).toBe(0x73);
+      expect(itemBuffer[3]).toBe(0x31);
+      // Verify ESC Q A (0x1B, 0x51, 0x41)
+      expect(itemBuffer[4]).toBe(0x1b);
+      expect(itemBuffer[5]).toBe(0x51);
+      expect(itemBuffer[6]).toBe(0x41);
+      // Verify numeric digits + CR (0x0D)
+      expect(itemBuffer.slice(7, 13).toString('ascii')).toBe('750.00');
+      expect(itemBuffer[13]).toBe(0x0d);
+
+      // Test Total Due with Total indicator
+      const totalBuffer = HardwareService.buildPoleDisplayBuffer('SUBTOTAL: Rs.1,450', 'TOTAL DUE: Rs.1,350', 'PRICE_DISPLAY');
+      expect(totalBuffer[1]).toBe(0x1b);
+      expect(totalBuffer[2]).toBe(0x73);
+      expect(totalBuffer[3]).toBe(0x32); // Total lamp: '2' (0x32)
+      expect(totalBuffer.slice(7, 11).toString('ascii')).toBe('1350');
+
+      // Test Change Due with Change indicator
+      const changeBuffer = HardwareService.buildPoleDisplayBuffer('PAID CASH: Rs.2,000', 'CHANGE DUE: Rs.650', 'PRICE_DISPLAY');
+      expect(changeBuffer[1]).toBe(0x1b);
+      expect(changeBuffer[2]).toBe(0x73);
+      expect(changeBuffer[3]).toBe(0x34); // Change lamp: '4' (0x34)
+      expect(changeBuffer.slice(7, 10).toString('ascii')).toBe('650');
+    });
+
     it('generates compliant CD5220 / DSP800 byte sequences', () => {
       const buffer = HardwareService.buildPoleDisplayBuffer(l1, l2, 'CD5220');
       expect(buffer).toBeInstanceOf(Buffer);
