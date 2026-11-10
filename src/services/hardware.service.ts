@@ -22,7 +22,7 @@ export interface ScaleReading {
   raw: string;
 }
 
-export type PoleDisplayProtocol = 'CD5220' | 'ESCPOS' | 'UTC' | 'AEDEX';
+export type PoleDisplayProtocol = 'PRICE_DISPLAY' | 'CD5220' | 'ESCPOS' | 'UTC' | 'AEDEX';
 
 export interface PoleDisplayLines {
   line1: string;
@@ -286,6 +286,48 @@ export class HardwareService {
     const parts: number[] = [];
 
     switch (protocol) {
+      case 'PRICE_DISPLAY': {
+        // Single-line 8-digit LED / VFD Price Display (ESC Q A protocol, e.g. LED8 / LED8N / DSP-840)
+        const combined = `${line1} ${line2}`;
+        const noCommas = combined.replace(/,/g, '');
+        let indicator = 0; // 0=None, 1=Price, 2=Total, 3=Collect, 4=Change
+        let amountStr = '0.00';
+
+        if (/change/i.test(noCommas)) {
+          indicator = 4;
+          const m = noCommas.match(/\bchange(?:\s+due)?[:\s]+(?:rs\.?\s*)?(\d+(?:\.\d+)?)/i);
+          amountStr = (m && m[1]) || (noCommas.match(/-?\d+(?:\.\d+)?/)?.[0] || '0.00');
+        } else if (/\btotal|subtotal|due/i.test(noCommas)) {
+          indicator = 2;
+          const m = noCommas.match(/\btotal(?:\s+due)?[:\s]+(?:rs\.?\s*)?(\d+(?:\.\d+)?)/i) ||
+                    noCommas.match(/\bsubtotal[:\s]+(?:rs\.?\s*)?(\d+(?:\.\d+)?)/i);
+          amountStr = (m && m[1]) || (noCommas.match(/-?\d+(?:\.\d+)?/)?.[0] || '0.00');
+        } else if (/paid|cash|collect/i.test(noCommas)) {
+          indicator = 3;
+          const m = noCommas.match(/\b(?:paid|cash|collect)[:\s]+(?:rs\.?\s*)?(\d+(?:\.\d+)?)/i);
+          amountStr = (m && m[1]) || (noCommas.match(/-?\d+(?:\.\d+)?/)?.[0] || '0.00');
+        } else if (/qty|price|item|\d+\.\d{2}/i.test(noCommas)) {
+          indicator = 1;
+          const m = noCommas.match(/\b(?:price|sub)?[:\s]+(?:rs\.?\s*)?(\d+(?:\.\d+)?)/i);
+          amountStr = (m && m[1]) || (noCommas.match(/-?\d+(?:\.\d+)?/)?.[0] || '0.00');
+        } else {
+          const m = noCommas.match(/-?\d+(?:\.\d+)?/);
+          amountStr = (m && m[0]) || '0.00';
+        }
+
+        const cleanAmount = amountStr.substring(0, 10);
+
+        // CLR (0x0C)
+        parts.push(0x0c);
+        // Set Indicator Lamp: ESC s <n> (0x1B, 0x73, 0x30 + indicator)
+        parts.push(0x1b, 0x73, 0x30 + indicator);
+        // ESC Q A <number> CR (0x1B, 0x51, 0x41 ... 0x0D)
+        parts.push(0x1b, 0x51, 0x41);
+        parts.push(...Buffer.from(cleanAmount, 'ascii'));
+        parts.push(0x0d);
+        break;
+      }
+
       case 'CD5220': {
         // Posiflex / DSP800 / E-POS / Standard Chinese Generic VFD
         // ESC @ (Initialize)
