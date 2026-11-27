@@ -99,6 +99,7 @@ export class SupportTicketService {
     dto: CreateTicketDTO
   ) {
     if (!tenantId) throw new AppError('Tenant context is required', 400);
+    if (!createdById) throw new AppError('User ID is required to create a ticket', 401);
     if (!dto.subject || !dto.description) {
       throw new AppError('Subject and description are required', 400);
     }
@@ -280,6 +281,7 @@ export class SupportTicketService {
     dto: AddMessageDTO,
     options: { tenantId?: string; isSuperAdmin?: boolean } = {}
   ) {
+    if (!senderId) throw new AppError('Sender ID is required', 401);
     const isSuperAdmin = Boolean(options.isSuperAdmin);
     const content = dto.content?.trim();
     if (!content) throw new AppError('Message content is required', 400);

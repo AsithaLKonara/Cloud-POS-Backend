@@ -1,6 +1,23 @@
 import { Request, Response, NextFunction } from 'express';
 import { SupportTicketService } from '../services/support-ticket.service';
 import { TicketStatus, TicketPriority, TicketCategory } from '@prisma/client';
+import { AppError } from '../middlewares/errorHandler';
+
+function getUserId(req: Request): string {
+  const userId = (req as any).user?.userId || (req as any).user?.id || (req as any).userId;
+  if (!userId) {
+    throw new AppError('Authentication required: user context missing', 401);
+  }
+  return userId;
+}
+
+function getTenantId(req: Request): string {
+  const tenantId = (req as any).user?.tenantId || (req as any).tenantId || (req.headers['x-tenant-id'] as string);
+  if (!tenantId) {
+    throw new AppError('Tenant context is required', 400);
+  }
+  return tenantId;
+}
 
 export class SupportTicketController {
   // ==========================================
@@ -9,8 +26,8 @@ export class SupportTicketController {
 
   static async createTicket(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
-      const userId = (req as any).user?.id;
+      const tenantId = getTenantId(req);
+      const userId = getUserId(req);
 
       const ticket = await SupportTicketService.createTicket(tenantId, userId, req.body);
       res.status(201).json({
@@ -25,7 +42,7 @@ export class SupportTicketController {
 
   static async getTenantTickets(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
+      const tenantId = getTenantId(req);
       const result = await SupportTicketService.getTenantTickets(tenantId, req.query);
       res.status(200).json({
         success: true,
@@ -38,7 +55,7 @@ export class SupportTicketController {
 
   static async getTenantTicketDetail(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
+      const tenantId = getTenantId(req);
       const id = req.params.id as string;
       const ticket = await SupportTicketService.getTenantTicketDetail(tenantId, id);
       res.status(200).json({
@@ -52,8 +69,8 @@ export class SupportTicketController {
 
   static async addTenantMessage(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
-      const userId = (req as any).user?.id;
+      const tenantId = getTenantId(req);
+      const userId = getUserId(req);
       const id = req.params.id as string;
 
       const message = await SupportTicketService.addMessage(id, userId, req.body, {
@@ -73,8 +90,8 @@ export class SupportTicketController {
 
   static async updateTenantTicketStatus(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
-      const userId = (req as any).user?.id;
+      const tenantId = getTenantId(req);
+      const userId = getUserId(req);
       const id = req.params.id as string;
       const { status, notes } = req.body;
 
@@ -96,7 +113,7 @@ export class SupportTicketController {
 
   static async submitCsat(req: Request, res: Response, next: NextFunction) {
     try {
-      const tenantId = (req as any).user?.tenantId || (req as any).tenantId;
+      const tenantId = getTenantId(req);
       const id = req.params.id as string;
       const { rating, feedback } = req.body;
 
@@ -142,7 +159,7 @@ export class SupportTicketController {
 
   static async addSuperadminMessage(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id;
+      const userId = getUserId(req);
       const id = req.params.id as string;
 
       const message = await SupportTicketService.addMessage(id, userId, req.body, {
@@ -161,7 +178,7 @@ export class SupportTicketController {
 
   static async updateSuperadminStatus(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id;
+      const userId = getUserId(req);
       const id = req.params.id as string;
       const { status, notes } = req.body;
 
@@ -182,7 +199,7 @@ export class SupportTicketController {
 
   static async assignTicket(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id;
+      const userId = getUserId(req);
       const id = req.params.id as string;
       const { assignedToId } = req.body;
 
@@ -199,7 +216,7 @@ export class SupportTicketController {
 
   static async updatePriority(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id;
+      const userId = getUserId(req);
       const id = req.params.id as string;
       const { priority } = req.body;
 
@@ -229,7 +246,7 @@ export class SupportTicketController {
 
   static async createCannedResponse(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id;
+      const userId = getUserId(req);
       const canned = await SupportTicketService.createCannedResponse(userId, req.body);
       res.status(201).json({
         success: true,

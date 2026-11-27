@@ -80,7 +80,9 @@ export function authenticateJWT(req: AuthRequest, res: Response, next: NextFunct
       finalPayload = verifyAccessToken(newAccessToken);
     }
 
+    (finalPayload as any).id = finalPayload.userId;
     req.user = finalPayload;
+    (req as any).userId = finalPayload.userId;
     runWithContext(finalPayload, next);
   } catch (error: any) {
     res.status(401).json({
@@ -100,7 +102,9 @@ export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction
   if (token) {
     try {
       const payload = verifyAccessToken(token);
+      (payload as any).id = payload.userId;
       req.user = payload;
+      (req as any).userId = payload.userId;
     } catch {
       // Ignore invalid token for optional auth
     }
