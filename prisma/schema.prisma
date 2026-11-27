@@ -65,6 +65,7 @@ model Tenant {
   whatsAppMessages       WhatsAppMessage[]
   productSerials         ProductSerial[]
   warrantyClaims         WarrantyClaim[]
+  supportTickets         SupportTicket[]
 
   @@index([slug])
   @@index([status])
@@ -221,6 +222,7 @@ model Branch {
   inventoryBatches InventoryBatch[]
   productSerials   ProductSerial[]
   warrantyClaims   WarrantyClaim[]
+  supportTickets   SupportTicket[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -454,6 +456,11 @@ model User {
   userRoles         UserRole[]
   loggedExpenses    BranchExpense[]
   posPin            String?
+  createdTickets    SupportTicket[]            @relation("CreatedTickets")
+  assignedTickets   SupportTicket[]            @relation("AssignedTickets")
+  supportMessages   SupportTicketMessage[]
+  createdCannedResponses SupportCannedResponse[]
+  supportActivityLogs    SupportTicketActivityLog[]
 
   @@index([tenantId])
 }
@@ -1479,6 +1486,158 @@ model WarrantyClaimLog {
   createdAt          DateTime       @default(now())
 
   @@index([claimId])
+}
+
+enum TicketCategory {
+  HARDWARE_PERIPHERAL
+  POS_REGISTER
+  ERP_INVENTORY
+  CRM_COMMERCE
+  BILLING_SUBSCRIPTION
+  FEATURE_REQUEST
+  GENERAL_INQUIRY
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL_URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketSenderType {
+  TENANT_USER
+  SUPERADMIN_AGENT
+  SYSTEM_BOT
+}
+
+model SupportTicket {
+  id                       String                     @id @default(uuid())
+  ticketNumber             Int                        @default(autoincrement())
+  tenantId                 String
+  tenant                   Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  createdById              String
+  createdBy                User                       @relation("CreatedTickets", fields: [createdById], references: [id])
+  
+  assignedToId             String?
+  assignedTo               User?                      @relation("AssignedTickets", fields: [assignedToId], references: [id], onDelete: SetNull)
+  
+  branchId                 String?
+  branch                   Branch?                    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  
+  subject                  String
+  description              String                     @db.Text
+  category                 TicketCategory             @default(GENERAL_INQUIRY)
+  priority                 TicketPriority             @default(MEDIUM)
+  status                   TicketStatus               @default(OPEN)
+  
+  sourceRoute              String?
+  posMetadata              Json?
+  
+  firstResponseDueAt       DateTime
+  resolutionDueAt          DateTime
+  firstRespondedAt         DateTime?
+  resolvedAt               DateTime?
+  closedAt                 DateTime?
+  slaFirstResponseBreached Boolean                    @default(false)
+  slaResolutionBreached    Boolean                    @default(false)
+  
+  csatRating               Int?
+  csatFeedback             String?                    @db.Text
+  csatRatedAt              DateTime?
+
+  messages                 SupportTicketMessage[]
+  attachments              SupportTicketAttachment[]
+  activityLogs             SupportTicketActivityLog[]
+
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime                   @updatedAt
+
+  @@index([tenantId, status])
+  @@index([priority, status])
+  @@index([assignedToId])
+  @@index([createdAt])
+  @@index([ticketNumber])
+}
+
+model SupportTicketMessage {
+  id              String                    @id @default(uuid())
+  ticketId        String
+  ticket          SupportTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  senderId        String
+  sender          User                      @relation(fields: [senderId], references: [id])
+  senderType      TicketSenderType          @default(TENANT_USER)
+  
+  content         String                    @db.Text
+  isInternal      Boolean                   @default(false)
+  
+  attachments     SupportTicketAttachment[]
+
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  @@index([ticketId, isInternal])
+}
+
+model SupportTicketAttachment {
+  id              String                @id @default(uuid())
+  ticketId        String
+  ticket          SupportTicket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  messageId       String?
+  message         SupportTicketMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  fileName        String
+  fileUrl         String
+  fileType        String
+  fileSize        Int
+
+  createdAt       DateTime              @default(now())
+
+  @@index([ticketId])
+  @@index([messageId])
+}
+
+model SupportCannedResponse {
+  id              String         @id @default(uuid())
+  title           String
+  category        TicketCategory @default(HARDWARE_PERIPHERAL)
+  shortcutCode    String         @unique
+  content         String         @db.Text
+  
+  createdById     String
+  createdBy       User           @relation(fields: [createdById], references: [id])
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model SupportTicketActivityLog {
+  id              String         @id @default(uuid())
+  ticketId        String
+  ticket          SupportTicket  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  actorId         String
+  actor           User           @relation(fields: [actorId], references: [id])
+  
+  action          String
+  fromValue       String?
+  toValue         String?
+  notes           String?
+
+  createdAt       DateTime       @default(now())
+
+  @@index([ticketId])
 }
 
 
